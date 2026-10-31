@@ -12,56 +12,47 @@ export type Rank =
   | 'horse'
   | 'cannon'
   | 'soldier';
-export type CoveredRank = Exclude<Rank, 'general'>;
-
 export interface Piece {
   readonly color: Color;
   readonly rank: Rank;
 }
 
-// A covered piece's color and starting-square role are public; its rank is not.
+// A covered piece's color is public; its identity, including a general, is not.
 export type Square =
-  | { readonly faceUp: false; readonly color: Color; readonly cover: CoveredRank; readonly rank: CoveredRank }
+  | { readonly faceUp: false; readonly color: Color; readonly rank: Rank }
   | { readonly faceUp: true; readonly piece: Piece }
   | null;
 
 export type PublicSquare =
-  | { readonly faceUp: false; readonly color: Color; readonly cover: CoveredRank }
+  | { readonly faceUp: false; readonly color: Color }
   | { readonly faceUp: true; readonly piece: Piece }
   | null;
 
 export interface Outcome {
   readonly winner: Player;
-  readonly reason: 'checkmate' | 'stalemate';
+  readonly reason: 'general-captured' | 'checkmate' | 'stalemate';
 }
 
-export interface LastMove {
-  readonly from: number;
-  readonly to: number;
-  readonly piece: Piece;
-  readonly captured: Piece | null;
-  readonly capturedWasHidden: boolean;
-}
-
-export interface Capture {
-  readonly piece: Piece;
-  readonly wasHidden: boolean;
-}
+export type LastAction =
+  | { readonly type: 'flip'; readonly at: number; readonly piece: Piece }
+  | { readonly type: 'move'; readonly from: number; readonly to: number; readonly piece: Piece; readonly captured: Piece | null };
 
 export interface GameView {
   readonly board: readonly PublicSquare[];
   readonly turn: Player;
   readonly colors: readonly [Color, Color];
   readonly outcome: Outcome | null;
-  readonly lastMove: LastMove | null;
-  readonly captures: readonly Capture[];
+  readonly lastAction: LastAction | null;
+  readonly captures: readonly Piece[];
 }
 
 export interface GameState extends GameView {
   readonly board: readonly Square[];
 }
 
-export type Action = { readonly type: 'move'; readonly from: number; readonly to: number };
+export type Action =
+  | { readonly type: 'flip'; readonly at: number }
+  | { readonly type: 'move'; readonly from: number; readonly to: number };
 
 export type ActionResult =
   | { readonly ok: true; readonly state: GameState }
@@ -100,7 +91,7 @@ export function squareColor(square: PublicSquare): Color | null {
   return square.faceUp ? square.piece.color : square.color;
 }
 
-/** Create the standard setup, shuffling each side's 15 non-generals independently. */
+/** Shuffle each side's 16 identities, including its general, over its starting points. */
 export function createGame(random: () => number = Math.random): GameState {
   const board: Square[] = Array(BOARD_SIZE).fill(null);
 
@@ -108,35 +99,32 @@ export function createGame(random: () => number = Math.random): GameState {
     const homeRow = color === 'red' ? 9 : 0;
     const cannonRow = color === 'red' ? 7 : 2;
     const soldierRow = color === 'red' ? 6 : 3;
-    const slots: Array<{ index: number; cover: CoveredRank }> = [];
+    const slots: Array<{ index: number; rank: Rank }> = [];
 
     BACK_RANK.forEach((rank, column) => {
-      const index = indexAt(homeRow, column);
-      if (rank === 'general') board[index] = { faceUp: true, piece: { color, rank } };
-      else slots.push({ index, cover: rank });
+      slots.push({ index: indexAt(homeRow, column), rank });
     });
-    for (const column of [1, 7]) slots.push({ index: indexAt(cannonRow, column), cover: 'cannon' });
-    for (const column of [0, 2, 4, 6, 8]) slots.push({ index: indexAt(soldierRow, column), cover: 'soldier' });
+    for (const column of [1, 7]) slots.push({ index: indexAt(cannonRow, column), rank: 'cannon' });
+    for (const column of [0, 2, 4, 6, 8]) slots.push({ index: indexAt(soldierRow, column), rank: 'soldier' });
 
-    const ranks = slots.map((slot) => slot.cover);
+    const ranks = slots.map((slot) => slot.rank);
     for (let i = ranks.length - 1; i > 0; i -= 1) {
       const j = Math.floor(random() * (i + 1));
       [ranks[i], ranks[j]] = [ranks[j], ranks[i]];
     }
-    slots.forEach(({ index, cover }, i) => {
-      board[index] = { faceUp: false, color, cover, rank: ranks[i] };
+    slots.forEach(({ index }, i) => {
+      board[index] = { faceUp: false, color, rank: ranks[i] };
     });
   }
 
-  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastMove: null, captures: [] };
+  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [] };
 }
 
 /** Pseudo-legal moves include attacks on a general and do not check the mover's own general. */
 function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[] {
   const source = board[from];
-  if (!source) return [];
-  const color = squareColor(source)!;
-  const rank = source.faceUp ? source.piece.rank : source.cover;
+  if (!source?.faceUp) return [];
+  const { color, rank } = source.piece;
   const row = Math.floor(from / BOARD_COLUMNS);
   const column = from % BOARD_COLUMNS;
   const destinations: number[] = [];
@@ -144,7 +132,8 @@ function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[]
   function add(rowTo: number, columnTo: number): void {
     if (!inBounds(rowTo, columnTo)) return;
     const to = indexAt(rowTo, columnTo);
-    if (squareColor(board[to]) !== color) destinations.push(to);
+    const target = board[to];
+    if (!target || (target.faceUp && target.piece.color !== color)) destinations.push(to);
   }
 
   if (rank === 'general') {
@@ -200,12 +189,12 @@ function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[]
         if (!target) {
           if (!screenFound) destinations.push(to);
         } else if (rank === 'rook') {
-          if (squareColor(target) !== color) destinations.push(to);
+          if (target.faceUp && target.piece.color !== color) destinations.push(to);
           break;
         } else if (!screenFound) {
           screenFound = true;
         } else {
-          if (squareColor(target) !== color) destinations.push(to);
+          if (target.faceUp && target.piece.color !== color) destinations.push(to);
           break;
         }
       }
@@ -222,11 +211,11 @@ function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[]
   return destinations;
 }
 
-/** Covered pieces threaten using their starting-square role, just as they move. */
+/** Only revealed pieces attack; a still-covered general cannot be in check. */
 export function isInCheck(board: readonly PublicSquare[], color: Color): boolean {
   const general = board.findIndex((square) =>
     square?.faceUp && square.piece.color === color && square.piece.rank === 'general');
-  if (general < 0) return true;
+  if (general < 0) return false;
   return board.some((square, from) =>
     squareColor(square) === oppositeColor(color) && pseudoMovesFrom(board, from).includes(general));
 }
@@ -235,12 +224,9 @@ export function isInCheck(board: readonly PublicSquare[], color: Color): boolean
 export function legalMovesFrom(board: readonly PublicSquare[], from: number, color: Color): number[] {
   if (!Number.isInteger(from) || from < 0 || from >= BOARD_SIZE) return [];
   const source = board[from];
-  if (!source || squareColor(source) !== color) return [];
+  if (!source?.faceUp || source.piece.color !== color) return [];
 
   return pseudoMovesFrom(board, from).filter((to) => {
-    const target = board[to];
-    // The game ends at checkmate, before a general is actually captured.
-    if (target?.faceUp && target.piece.rank === 'general') return false;
     const next = board.slice();
     next[to] = source;
     next[from] = null;
@@ -251,48 +237,65 @@ export function legalMovesFrom(board: readonly PublicSquare[], from: number, col
 export function legalActions(game: GameView): Action[] {
   if (game.outcome) return [];
   const color = game.colors[game.turn];
+  const checked = isInCheck(game.board, color);
   const actions: Action[] = [];
   game.board.forEach((square, from) => {
     if (squareColor(square) !== color) return;
-    for (const to of legalMovesFrom(game.board, from, color)) actions.push({ type: 'move', from, to });
+    if (square && !square.faceUp) {
+      if (!checked) actions.push({ type: 'flip', at: from });
+    } else {
+      for (const to of legalMovesFrom(game.board, from, color)) actions.push({ type: 'move', from, to });
+    }
   });
   return actions;
 }
 
-function identity(square: Exclude<Square, null>): Piece {
-  return square.faceUp ? square.piece : { color: square.color, rank: square.rank };
-}
-
-/** Validate and apply a move without mutating the previous state. */
+/** Validate and apply exactly one flip or move without mutating the previous state. */
 export function applyAction(game: GameState, action: Action): ActionResult {
   if (game.outcome) return { ok: false, error: 'The game is already over.' };
-  if (action.type !== 'move' || !legalMovesFrom(game.board, action.from, game.colors[game.turn]).includes(action.to)) {
-    return { ok: false, error: 'That is not a legal move.' };
-  }
-
   const board = game.board.slice();
-  const source = board[action.from]!;
-  const target = board[action.to];
-  const moved = { ...identity(source) };
-  const captured = target ? { ...identity(target) } : null;
-  const capturedWasHidden = Boolean(target && !target.faceUp);
-  board[action.to] = { faceUp: true, piece: moved };
-  board[action.from] = null;
+  const color = game.colors[game.turn];
+  let lastAction: LastAction;
+  let captured: Piece | null = null;
+
+  if (action.type === 'flip') {
+    const square = board[action.at];
+    if (!Number.isInteger(action.at) || action.at < 0 || action.at >= BOARD_SIZE ||
+      !square || square.faceUp || square.color !== color || isInCheck(board, color)) {
+      return { ok: false, error: 'That is not a legal action.' };
+    }
+    const piece: Piece = { color: square.color, rank: square.rank };
+    board[action.at] = { faceUp: true, piece };
+    lastAction = { type: 'flip', at: action.at, piece };
+  } else if (action.type === 'move') {
+    if (!legalMovesFrom(board, action.from, color).includes(action.to)) {
+      return { ok: false, error: 'That is not a legal action.' };
+    }
+    const source = board[action.from];
+    const target = board[action.to];
+    if (!source?.faceUp || (target && !target.faceUp)) {
+      return { ok: false, error: 'That is not a legal action.' };
+    }
+    const piece = { ...source.piece };
+    captured = target ? { ...target.piece } : null;
+    board[action.to] = { faceUp: true, piece };
+    board[action.from] = null;
+    lastAction = { type: 'move', from: action.from, to: action.to, piece, captured };
+  } else {
+    return { ok: false, error: 'That is not a legal action.' };
+  }
 
   const next: GameState = {
     board,
     turn: otherPlayer(game.turn),
     colors: game.colors,
     outcome: null,
-    lastMove: {
-      from: action.from,
-      to: action.to,
-      piece: moved,
-      captured,
-      capturedWasHidden,
-    },
-    captures: captured ? [...game.captures, { piece: captured, wasHidden: capturedWasHidden }] : game.captures,
+    lastAction,
+    captures: captured ? [...game.captures, captured] : game.captures,
   };
+  if (captured?.rank === 'general') {
+    return { ok: true, state: { ...next, outcome: { winner: game.turn, reason: 'general-captured' } } };
+  }
   if (legalActions(next).length === 0) {
     return {
       ok: true,
@@ -308,22 +311,25 @@ export function applyAction(game: GameState, action: Action): ActionResult {
   return { ok: true, state: next };
 }
 
-/** Copy only public information, revealing captured pieces but not covered ranks. */
+/** Copy only public information; no covered identity is sent to either player. */
 export function toGameView(game: GameState): GameView {
   return {
     board: game.board.map((square): PublicSquare => {
       if (!square) return null;
-      if (!square.faceUp) return { faceUp: false, color: square.color, cover: square.cover };
+      if (!square.faceUp) return { faceUp: false, color: square.color };
       return { faceUp: true, piece: { ...square.piece } };
     }),
     turn: game.turn,
     colors: [...game.colors],
     outcome: game.outcome ? { ...game.outcome } : null,
-    lastMove: game.lastMove ? {
-      ...game.lastMove,
-      piece: { ...game.lastMove.piece },
-      captured: game.lastMove.captured ? { ...game.lastMove.captured } : null,
+    lastAction: game.lastAction?.type === 'flip' ? {
+      ...game.lastAction,
+      piece: { ...game.lastAction.piece },
+    } : game.lastAction ? {
+      ...game.lastAction,
+      piece: { ...game.lastAction.piece },
+      captured: game.lastAction.captured ? { ...game.lastAction.captured } : null,
     } : null,
-    captures: game.captures.map((capture) => ({ ...capture, piece: { ...capture.piece } })),
+    captures: game.captures.map((piece) => ({ ...piece })),
   };
 }

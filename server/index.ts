@@ -8,7 +8,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 const server = createRoomServer({ port, host });
 server.on('listening', () => {
-  console.log(`Jieqi room server listening on ws://${host}:${port}/ws`);
+  console.log(`Flip Xiangqi room server listening on ws://${host}:${port}/ws`);
 });
 server.on('error', (error) => {
   console.error('Room server error:', error.message);

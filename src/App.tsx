@@ -34,7 +34,7 @@ function colorName(color: Color | null): string {
 function squareLabel(square: PublicSquare, index: number): string {
   const position = `Row ${Math.floor(index / BOARD_COLUMNS) + 1}, column ${(index % BOARD_COLUMNS) + 1}`;
   if (!square) return `${position}, empty`;
-  if (!square.faceUp) return `${position}, ${colorName(square.color)} covered piece, moves as ${square.cover} until revealed`;
+  if (!square.faceUp) return `${position}, ${colorName(square.color)} covered piece`;
   return `${position}, ${colorName(square.piece.color)} ${square.piece.rank}, ${symbols[square.piece.rank][square.piece.color]}`;
 }
 
@@ -78,7 +78,9 @@ function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) 
               'square',
               selected === index ? 'square--selected' : '',
               destinations.includes(index) ? 'square--destination' : '',
-              game.lastMove && (game.lastMove.from === index || game.lastMove.to === index) ? 'square--last-move' : '',
+              game.lastAction && (game.lastAction.type === 'flip'
+                ? game.lastAction.at === index
+                : game.lastAction.from === index || game.lastAction.to === index) ? 'square--last-move' : '',
             ].filter(Boolean).join(' ');
             const label = `${squareLabel(square, index)}${destinations.includes(index) ? ', legal destination' : ''}`;
             return (
@@ -89,7 +91,7 @@ function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) 
                 onClick={() => onSquare(index)}
                 disabled={!canPlay}
                 aria-label={label}
-                aria-pressed={square ? selected === index : undefined}
+                aria-pressed={square?.faceUp ? selected === index : undefined}
                 title={label}
               >
                 {square && !square.faceUp && (
@@ -144,6 +146,8 @@ export default function App() {
     ? legalMovesFrom(game.board, selected, currentColor)
     : [];
   const checked = Boolean(game && currentColor && isInCheck(game.board, currentColor));
+  const opponentColor = currentColor === 'red' ? 'black' : 'red';
+  const opponentChecked = Boolean(game && currentColor && isInCheck(game.board, opponentColor));
 
   useEffect(() => {
     setSelected(null);
@@ -166,6 +170,8 @@ export default function App() {
     const square = game.board[index];
     if (selected !== null && destinations.includes(index)) {
       perform({ type: 'move', from: selected, to: index });
+    } else if (square && !square.faceUp && square.color === currentColor) {
+      if (!checked) perform({ type: 'flip', at: index });
     } else if (square && squareColor(square) === currentColor) {
       setSelected((current) => current === index ? null : index);
     } else {
@@ -227,20 +233,19 @@ export default function App() {
 
   function guidance(): string {
     if (!game) return 'Start the room server to play online, or choose hotseat play.';
+    if (game.outcome?.reason === 'general-captured') return 'The revealed general was captured.';
     if (game.outcome?.reason === 'checkmate') return 'Checkmate — the opposing general cannot escape.';
     if (game.outcome?.reason === 'stalemate') return 'Stalemate — the player with no legal move loses.';
     if (mode === 'online' && room.status !== 'connected') return 'Reconnect to continue the same game.';
     if (mode === 'online' && (!room.connected[0] || !room.connected[1])) {
       return 'Share the room link below. The game pauses if either player disconnects.';
     }
-    if (checked) return 'Check! The general must be protected.';
+    if (checked) return 'Check! Move to protect your general; flipping cannot resolve check.';
+    if (opponentChecked) return `${colorName(opponentColor)}’s revealed general is in check.`;
     if (mode === 'online' && room.player !== game.turn) return 'Waiting for your opponent to play.';
     const square = selected === null ? null : game.board[selected];
-    if (square && !square.faceUp) {
-      return `This covered piece moves as a ${square.cover}, then reveals its identity.${destinations.length ? '' : ' No legal moves.'}`;
-    }
     if (square) return destinations.length ? 'Choose a highlighted destination.' : 'This piece has no legal moves.';
-    return 'Select one of your pieces, then choose a highlighted destination.';
+    return 'Flip one of your covered pieces, or select a revealed piece to move.';
   }
 
   function playerCard(player: Player) {
@@ -264,7 +269,7 @@ export default function App() {
         <div className="brand-mark" aria-hidden="true">棋</div>
         <div>
           <p className="eyebrow">A little game of strategy &amp; luck</p>
-          <h1>Jieqi <span>揭棋</span></h1>
+          <h1>翻转象棋 <span>· Flip</span></h1>
         </div>
         <div className="mode-label">{mode === 'local' ? 'HOTSEAT' : 'ONLINE ROOM'}</div>
       </header>
@@ -273,7 +278,7 @@ export default function App() {
         <section className="play-area" aria-label="Game">
           <div className="game-heading" role="status" aria-live="polite">
             <div>
-              <p className="eyebrow">{game?.outcome ? 'Game over' : 'Move · Reveal · Checkmate'}</p>
+              <p className="eyebrow">{game?.outcome ? 'Game over' : 'Flip · Move · Capture'}</p>
               <h2>{heading()}</h2>
               <p>{guidance()}</p>
             </div>
@@ -285,19 +290,24 @@ export default function App() {
             <div className="board-placeholder">Your game will appear here.</div>
           )}
 
-          {game?.lastMove?.captured && (
+          {game?.lastAction?.type === 'flip' && (
             <p className="capture-note" role="status" aria-live="polite">
-              Captured: {colorName(game.lastMove.captured.color)} {game.lastMove.captured.rank}{' '}
-              ({symbols[game.lastMove.captured.rank][game.lastMove.captured.color]})
-              {game.lastMove.capturedWasHidden ? ' — revealed on capture.' : '.'}
+              Flipped: {colorName(game.lastAction.piece.color)} {game.lastAction.piece.rank}{' '}
+              ({symbols[game.lastAction.piece.rank][game.lastAction.piece.color]}). The turn is over.
+            </p>
+          )}
+          {game?.lastAction?.type === 'move' && game.lastAction.captured && (
+            <p className="capture-note" role="status" aria-live="polite">
+              Captured: {colorName(game.lastAction.captured.color)} {game.lastAction.captured.rank}{' '}
+              ({symbols[game.lastAction.captured.rank][game.lastAction.captured.color]}).
             </p>
           )}
 
           {game && game.captures.length > 0 && (
             <div className="captured-list" aria-label="Captured pieces">
               <strong>Captured</strong>
-              {game.captures.map(({ piece, wasHidden }, index) => {
-                const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
+              {game.captures.map((piece, index) => {
+                const label = `${colorName(piece.color)} ${piece.rank}`;
                 return (
                   <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
                     {symbols[piece.rank][piece.color]}
@@ -385,13 +395,13 @@ export default function App() {
             <p className="eyebrow">The essentials</p>
             <h2>How to play</h2>
             <ol>
-              <li>Red moves first. Only the generals start face-up; both sides’ other identities are hidden.</li>
-              <li>A covered piece moves first as the piece normally on its starting point, then reveals its true identity.</li>
-              <li>After that, it moves as its revealed piece. Covered pieces can block and be captured; captured identities are revealed.</li>
-              <li>Use xiangqi movement, palace and river rules. Protect your general from check.</li>
-              <li>Checkmate wins; a player with no legal move also loses.</li>
+              <li>Red plays first. All 32 pieces, including both generals, start covered.</li>
+              <li>On your turn, flip one of your covered pieces in place, or move one of your revealed pieces. A flip ends the turn.</li>
+              <li>Covered pieces block points but cannot move, attack, or be captured.</li>
+              <li>Revealed pieces use their true xiangqi movement, including palace and river limits.</li>
+              <li>Capture or checkmate the revealed general to win. A player in check must move to safety; no legal action is a loss.</li>
             </ol>
-            <p className="rank-order"><strong>Remember</strong> Horses can be blocked at the leg; cannons capture over one screen. Generals may not face each other.</p>
+            <p className="rank-order"><strong>Remember</strong> A covered general cannot be checked. Once revealed, protect it from check; both revealed generals may not face each other.</p>
           </section>
         </aside>
       </div>

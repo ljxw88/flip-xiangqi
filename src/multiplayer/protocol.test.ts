@@ -13,6 +13,11 @@ describe('room protocol compatibility', () => {
     })).toBe(false);
   });
 
+  it('rejects the previous starting-role protocol even though it also has a 9×10 board', () => {
+    const game = toGameView(createGame(() => 0));
+    expect(isSupportedGameView({ ...game, lastAction: undefined, lastMove: null })).toBe(false);
+  });
+
   it('rejects incomplete or malformed state before it reaches the board', () => {
     const game = toGameView(createGame(() => 0));
     expect(isSupportedGameView(null)).toBe(false);

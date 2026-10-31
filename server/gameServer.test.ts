@@ -62,7 +62,7 @@ function customPosition(entries: Array<[number, number, Square]>): GameState {
   board[at(9, 4)] = { faceUp: true, piece: { color: 'red', rank: 'general' } };
   board[at(0, 3)] = { faceUp: true, piece: { color: 'black', rank: 'general' } };
   for (const [row, column, square] of entries) board[at(row, column)] = square;
-  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastMove: null, captures: [] };
+  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [] };
 }
 
 describe('WebSocket rooms', () => {
@@ -115,12 +115,12 @@ describe('WebSocket rooms', () => {
     });
   });
 
-  it('does not allow moves while a room is waiting for its second player', async () => {
+  it('does not allow flips while a room is waiting for its second player', async () => {
     const host = await connect();
     host.send({ type: 'create' });
     await host.next('joined');
     expect((await host.next('state')).connected).toEqual([true, false]);
-    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    host.send({ type: 'action', action: { type: 'flip', at: at(6, 0) } });
     expect((await host.next('error')).message).toMatch(/both players/i);
   });
 
@@ -133,51 +133,61 @@ describe('WebSocket rooms', () => {
     expect(joined.connected).toEqual([true, true]);
     expect(joined.game.board).toHaveLength(90);
     expect(joined.game.colors).toEqual(['red', 'black']);
-    expect(joined.game.board[at(9, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'general' } });
-    expect(joined.game.board[at(0, 4)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'general' } });
+    expect(joined.game.board[at(9, 4)]).toEqual({ faceUp: false, color: 'red' });
+    expect(joined.game.board[at(0, 4)]).toEqual({ faceUp: false, color: 'black' });
     const hidden = joined.game.board.filter((square) => square && !square.faceUp);
-    expect(hidden).toHaveLength(30);
-    expect(hidden.every((square) => square && !square.faceUp && !('rank' in square) && !('piece' in square))).toBe(true);
-    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red', cover: 'soldier' });
-    expect(joined.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black', cover: 'soldier' });
+    expect(hidden).toHaveLength(32);
+    expect(hidden.every((square) => square && !square.faceUp &&
+      !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
+    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red' });
+    expect(joined.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black' });
 
     const third = await connect();
     third.send({ type: 'join', room: hostSeat.room });
     expect((await third.next('error')).message).toMatch(/two players/i);
-    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
     expect((await guest.next('error')).message).toMatch(/not your turn/i);
-    host.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
-    expect((await host.next('error')).message).toMatch(/not a legal move/i);
-    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(4, 0) } });
-    expect((await host.next('error')).message).toMatch(/not a legal move/i);
-
+    host.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
+    expect((await host.next('error')).message).toMatch(/not a legal action/i);
     host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    expect((await host.next('error')).message).toMatch(/not a legal action/i);
+
+    host.send({ type: 'action', action: { type: 'flip', at: at(6, 0) } });
     const first = await guest.next('state', (message) => message.game.turn === 1);
     const firstForHost = await host.next('state', (message) => message.game.turn === 1);
     expect(first.game).toEqual(firstForHost.game);
-    expect(first.game.board[at(6, 0)]).toBeNull();
-    expect(first.game.board[at(5, 0)]).toMatchObject({ faceUp: true, piece: { color: 'red' } });
-    expect(first.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black', cover: 'soldier' });
-    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
-    const second = await host.next('state', (message) => message.game.board[at(4, 0)]?.faceUp === true);
+    expect(first.game.board[at(6, 0)]).toMatchObject({ faceUp: true, piece: { color: 'red' } });
+    expect(first.game.board[at(5, 0)]).toBeNull();
+    expect(first.game.lastAction).toMatchObject({ type: 'flip', at: at(6, 0) });
+    expect(first.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black' });
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    expect((await host.next('error')).message).toMatch(/not your turn/i);
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
+    const second = await host.next('state', (message) => message.game.board[at(3, 0)]?.faceUp === true);
     expect(second.game.turn).toBe(0);
   });
 
-  it('uses the covered starting role first, then validates the revealed role on later turns', async () => {
-    const game = customPosition([[6, 0, { faceUp: false, color: 'red', cover: 'soldier', rank: 'elephant' }]]);
+  it('flips in place, ends the turn, and later moves using the revealed identity', async () => {
+    const game = customPosition([
+      [6, 0, { faceUp: false, color: 'red', rank: 'rook' }],
+      [3, 0, { faceUp: false, color: 'black', rank: 'elephant' }],
+    ]);
     await useGameFactory(() => game);
     const { host, guest, joined } = await pair();
-    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red', cover: 'soldier' });
-    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(8, 2) } });
-    expect((await host.next('error')).message).toMatch(/not a legal move/i);
-    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red' });
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(6, 2) } });
+    expect((await host.next('error')).message).toMatch(/not a legal action/i);
+    host.socket.send(JSON.stringify({
+      type: 'action', action: { type: 'flip', at: at(6, 0), rank: 'general', to: at(6, 2) },
+    }));
     const revealed = await guest.next('state', (message) => message.game.turn === 1);
-    expect(revealed.game.board[at(5, 0)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'elephant' } });
-    guest.send({ type: 'action', action: { type: 'move', from: at(0, 3), to: at(1, 3) } });
-    await host.next('state', (message) => message.game.turn === 0 && message.game.lastMove !== null);
-    host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(7, 2) } });
-    const movedAgain = await guest.next('state', (message) => message.game.board[at(7, 2)]?.faceUp === true);
-    expect(movedAgain.game.board[at(7, 2)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'elephant' } });
+    expect(revealed.game.board[at(6, 0)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'rook' } });
+    expect(revealed.game.board[at(6, 2)]).toBeNull();
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
+    await host.next('state', (message) => message.game.turn === 0 && message.game.lastAction !== null);
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(6, 2) } });
+    const movedAgain = await guest.next('state', (message) => message.game.board[at(6, 2)]?.faceUp === true);
+    expect(movedAgain.game.board[at(6, 2)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'rook' } });
   });
 
   it('rejects moves exposing the general even when the piece movement itself is valid', async () => {
@@ -188,44 +198,65 @@ describe('WebSocket rooms', () => {
     await useGameFactory(() => game);
     const { host, guest } = await pair();
     host.send({ type: 'action', action: { type: 'move', from: at(5, 4), to: at(5, 3) } });
-    expect((await host.next('error')).message).toMatch(/not a legal move/i);
+    expect((await host.next('error')).message).toMatch(/not a legal action/i);
     host.send({ type: 'action', action: { type: 'move', from: at(5, 4), to: at(4, 4) } });
     const next = await guest.next('state', (message) => message.game.turn === 1);
     expect(next.game.board[at(4, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'rook' } });
   });
 
-  it('reveals a captured covered piece to both players but keeps all other identities secret', async () => {
-    const game = customPosition([
-      [7, 1, { faceUp: false, color: 'red', cover: 'cannon', rank: 'horse' }],
-      [2, 1, { faceUp: false, color: 'black', cover: 'cannon', rank: 'soldier' }],
-      [0, 1, { faceUp: false, color: 'black', cover: 'horse', rank: 'advisor' }],
-    ]);
+  it('does not allow a flip as a substitute for escaping check', async () => {
+    const game = {
+      ...customPosition([
+        [0, 3, null], [0, 4, { faceUp: true, piece: { color: 'black', rank: 'general' } }],
+        [4, 4, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+        [3, 8, { faceUp: false, color: 'black', rank: 'soldier' }],
+      ]),
+      turn: 1 as const,
+    };
     await useGameFactory(() => game);
     const { host, guest } = await pair();
-    host.send({ type: 'action', action: { type: 'move', from: at(7, 1), to: at(0, 1) } });
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 8) } });
+    expect((await guest.next('error')).message).toMatch(/not a legal action/i);
+    guest.send({ type: 'action', action: { type: 'move', from: at(0, 4), to: at(0, 3) } });
+    const escaped = await host.next('state', (message) => message.game.turn === 0 && message.game.lastAction !== null);
+    expect(escaped.game.board[at(3, 8)]).toEqual({ faceUp: false, color: 'black' });
+  });
+
+  it('rejects capture of a covered enemy until its owner flips it', async () => {
+    const game = customPosition([
+      [5, 0, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [6, 8, { faceUp: false, color: 'red', rank: 'soldier' }],
+      [5, 3, { faceUp: false, color: 'black', rank: 'horse' }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest, joined } = await pair();
+    expect(joined.game.board[at(5, 3)]).toEqual({ faceUp: false, color: 'black' });
+    host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(5, 3) } });
+    expect((await host.next('error')).message).toMatch(/not a legal action/i);
+    host.send({ type: 'action', action: { type: 'flip', at: at(6, 8) } });
+    await guest.next('state', (message) => message.game.turn === 1);
+    guest.send({ type: 'action', action: { type: 'flip', at: at(5, 3) } });
+    const flipped = await host.next('state', (message) => message.game.board[at(5, 3)]?.faceUp === true);
+    expect(flipped.game.board[at(5, 3)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'horse' } });
+    host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(5, 3) } });
     const [forHost, forGuest] = await Promise.all([
-      host.next('state', (message) => message.game.turn === 1),
-      guest.next('state', (message) => message.game.turn === 1),
+      host.next('state', (message) => message.game.captures.length === 1),
+      guest.next('state', (message) => message.game.captures.length === 1),
     ]);
     expect(forHost.game).toEqual(forGuest.game);
-    expect(forGuest.game.lastMove).toMatchObject({
-      piece: { color: 'red', rank: 'horse' },
-      captured: { color: 'black', rank: 'advisor' }, capturedWasHidden: true,
+    expect(forGuest.game.lastAction).toMatchObject({
+      type: 'move', piece: { color: 'red', rank: 'rook' }, captured: { color: 'black', rank: 'horse' },
     });
-    expect(forGuest.game.board[at(2, 1)]).toEqual({ faceUp: false, color: 'black', cover: 'cannon' });
-    expect(forGuest.game.captures).toEqual([{ piece: { color: 'black', rank: 'advisor' }, wasHidden: true }]);
-    guest.send({ type: 'action', action: { type: 'move', from: at(2, 1), to: at(2, 2) } });
-    const later = await host.next('state', (message) => message.game.turn === 0 && message.game.lastMove !== null);
-    expect(later.game.captures).toEqual(forGuest.game.captures);
+    expect(forGuest.game.captures).toEqual([{ color: 'black', rank: 'horse' }]);
   });
 
   it('pauses on disconnect and resumes the same seat and game with its session token', async () => {
     const { host, guest, hostSeat } = await pair();
-    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    host.send({ type: 'action', action: { type: 'flip', at: at(6, 0) } });
     const before = await guest.next('state', (message) => message.game.turn === 1);
     host.socket.close();
     expect((await guest.next('state', (message) => !message.connected[0])).connected).toEqual([false, true]);
-    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
     expect((await guest.next('error')).message).toMatch(/both players/i);
 
     const intruder = await connect();
@@ -238,17 +269,17 @@ describe('WebSocket rooms', () => {
     const after = await resumed.next('state');
     expect(after.connected).toEqual([true, true]);
     expect(after.game).toEqual(before.game);
-    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
-    expect((await resumed.next('state', (message) => message.game.board[at(4, 0)]?.faceUp === true)).game.turn).toBe(0);
+    guest.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
+    expect((await resumed.next('state', (message) => message.game.board[at(3, 0)]?.faceUp === true)).game.turn).toBe(0);
   });
 
-  it('rejects malformed messages, the old flip action, and an early rematch', async () => {
+  it('rejects malformed flip and move messages and an early rematch', async () => {
     const { host } = await pair();
     host.socket.send('not json');
     expect((await host.next('error')).message).toMatch(/invalid message/i);
     host.socket.send(JSON.stringify({ type: 'action', action: { type: 'move', from: '54', to: 45 } }));
     expect((await host.next('error')).message).toMatch(/invalid action/i);
-    host.socket.send(JSON.stringify({ type: 'action', action: { type: 'flip', at: at(6, 0) } }));
+    host.socket.send(JSON.stringify({ type: 'action', action: { type: 'flip', at: '54' } }));
     expect((await host.next('error')).message).toMatch(/invalid action/i);
     host.send({ type: 'rematch' });
     expect((await host.next('error')).message).toMatch(/finish the current game/i);
@@ -270,11 +301,28 @@ describe('WebSocket rooms', () => {
     expect(won.game.outcome).toEqual({ winner: 0, reason: 'checkmate' });
     expect(won.game.board[at(0, 4)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'general' } });
     guest.send({ type: 'rematch' });
-    const rematch = await host.next('state', (message) => message.game.lastMove === null && message.game.board.filter(Boolean).length === 32);
+    const rematch = await host.next('state', (message) => message.game.lastAction === null && message.game.board.filter(Boolean).length === 32);
     expect(rematch.game.turn).toBe(0);
     expect(rematch.game.colors).toEqual(['red', 'black']);
     expect(rematch.game.outcome).toBeNull();
-    expect(rematch.game.board.filter((square) => square && !square.faceUp)).toHaveLength(30);
+    expect(rematch.game.board.filter((square) => square && !square.faceUp)).toHaveLength(32);
+  });
+
+  it('reveals a covered general even into check, then broadcasts its capture as a win', async () => {
+    const game = customPosition([
+      [9, 4, null], [7, 4, { faceUp: false, color: 'red', rank: 'general' }],
+      [7, 0, { faceUp: true, piece: { color: 'black', rank: 'rook' } }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest, joined } = await pair();
+    expect(joined.game.board[at(7, 4)]).toEqual({ faceUp: false, color: 'red' });
+    host.send({ type: 'action', action: { type: 'flip', at: at(7, 4) } });
+    const revealed = await guest.next('state', (message) => message.game.turn === 1);
+    expect(revealed.game.board[at(7, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'general' } });
+    guest.send({ type: 'action', action: { type: 'move', from: at(7, 0), to: at(7, 4) } });
+    const won = await host.next('state', (message) => message.game.outcome !== null);
+    expect(won.game.outcome).toEqual({ winner: 1, reason: 'general-captured' });
+    expect(won.game.captures).toEqual([{ color: 'red', rank: 'general' }]);
   });
 
   it('keeps a room after a quick reconnect, then expires it after everyone leaves', async () => {
