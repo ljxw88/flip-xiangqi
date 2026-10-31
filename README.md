@@ -38,6 +38,8 @@ Vite proxies `/ws` to the room server at `127.0.0.1:3001`, so the other browser 
 
 The game pauses if either player disconnects. Reload the same tab or use **Reconnect** to reclaim its seat using a session token stored in that tab's session storage. Seats remain reserved for their original players; create a new room for different players. Rooms are kept in memory and expire 30 minutes after both players disconnect; restarting the server deletes them immediately. After a game ends, either connected player may start a rematch.
 
+This version replaces the old 4×8 Banqi protocol. After upgrading, restart the room server and reload both browsers; old in-memory rooms cannot be continued.
+
 ### Hosting beyond a local network
 
 The development server and plain HTTP/WebSocket are intended for trusted networks. For Internet play, build with `npm run build`, serve `dist/` over HTTPS, and reverse-proxy WebSocket upgrades on `/ws` to the running room server at `127.0.0.1:3001`. For example, inside an existing HTTPS nginx server block:
