@@ -11,6 +11,7 @@ import {
   type Action,
   type Color,
   type GameView,
+  type Player,
   type PublicSquare,
   type Rank,
 } from './game/engine';
@@ -42,87 +43,126 @@ interface BoardProps {
   selected: number | null;
   destinations: number[];
   canPlay: boolean;
+  largeBoard: boolean;
   onSquare: (index: number) => void;
 }
 
-function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) {
-  const [largeBoard, setLargeBoard] = useState(false);
+function Board({ game, selected, destinations, canPlay, largeBoard, onSquare }: BoardProps) {
   return (
-    <div className="board-shell">
-      <div className="board-scroll" role="region" aria-label="Game board; scroll horizontally when enlarged" tabIndex={largeBoard ? 0 : undefined}>
-        <div className={`board-frame${largeBoard ? ' board-frame--large' : ''}`}>
-          <div className="board" role="group" aria-label="Nine by ten xiangqi board, black palace at the top and red palace at the bottom; colors are mixed">
-            <svg className="board-lines" viewBox="0 0 900 1000" aria-hidden="true">
-              {Array.from({ length: BOARD_ROWS }, (_, row) => (
-                <line key={`rank-${row}`} x1="50" y1={50 + 100 * row} x2="850" y2={50 + 100 * row} />
-              ))}
-              {Array.from({ length: BOARD_COLUMNS }, (_, column) => {
-                const x = 50 + 100 * column;
-                return column === 0 || column === BOARD_COLUMNS - 1 ? (
-                  <line key={`file-${column}`} x1={x} y1="50" x2={x} y2="950" />
-                ) : (
-                  <g key={`file-${column}`}>
-                    <line x1={x} y1="50" x2={x} y2="450" />
-                    <line x1={x} y1="550" x2={x} y2="950" />
-                  </g>
-                );
-              })}
-              <line x1="350" y1="50" x2="550" y2="250" />
-              <line x1="550" y1="50" x2="350" y2="250" />
-              <line x1="350" y1="750" x2="550" y2="950" />
-              <line x1="550" y1="750" x2="350" y2="950" />
-              <text x="240" y="519" textAnchor="middle">楚 河</text>
-              <text x="660" y="519" textAnchor="middle">汉 界</text>
-            </svg>
-            <div className="board-intersections">
-              {game.board.map((square, index) => {
-                const flipped = game.lastAction?.type === 'flip' && game.lastAction.at === index;
-                const moved = game.lastAction?.type === 'move' && game.lastAction.to === index;
-                const from = moved && game.lastAction?.type === 'move' ? game.lastAction.from : index;
-                const travel = moved ? {
-                  '--travel-x': `${((from % BOARD_COLUMNS) - (index % BOARD_COLUMNS)) * 100 / 0.84}%`,
-                  '--travel-y': `${(Math.floor(from / BOARD_COLUMNS) - Math.floor(index / BOARD_COLUMNS)) * 100 / 0.84}%`,
-                } as CSSProperties : undefined;
-                const classes = [
-                  'square',
-                  selected === index ? 'square--selected' : '',
-                  destinations.includes(index) ? 'square--destination' : '',
-                  game.lastAction && (game.lastAction.type === 'flip'
-                    ? game.lastAction.at === index
-                    : game.lastAction.from === index || game.lastAction.to === index) ? 'square--last-move' : '',
-                ].filter(Boolean).join(' ');
-                const label = `${squareLabel(square, index)}${destinations.includes(index) ? ', legal destination' : ''}`;
-                return (
-                  <button
-                    key={index}
-                    type="button"
-                    className={classes}
-                    onClick={() => onSquare(index)}
-                    disabled={!canPlay}
-                    aria-label={label}
-                    aria-pressed={square?.faceUp ? selected === index : undefined}
-                    title={label}
-                  >
-                    {square && !square.faceUp && <span className="piece piece--hidden" aria-hidden="true">暗</span>}
-                    {square?.faceUp && (
-                      <span className={`piece piece--${square.piece.color}${flipped ? ' piece--flip' : ''}${moved ? ' piece--travel' : ''}`} style={travel} aria-hidden="true">
-                        {symbols[square.piece.rank][square.piece.color]}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+    <div className="board-scroll" role="region" aria-label="Game board; scroll horizontally when enlarged" tabIndex={largeBoard ? 0 : undefined}>
+      <div className={`board-frame${largeBoard ? ' board-frame--large' : ''}`}>
+        <div className="board" role="group" aria-label="Nine by ten xiangqi board, black palace at the top and red palace at the bottom; colors are mixed">
+          <svg className="board-lines" viewBox="0 0 900 1000" aria-hidden="true">
+            {Array.from({ length: BOARD_ROWS }, (_, row) => (
+              <line key={`rank-${row}`} x1="50" y1={50 + 100 * row} x2="850" y2={50 + 100 * row} />
+            ))}
+            {Array.from({ length: BOARD_COLUMNS }, (_, column) => {
+              const x = 50 + 100 * column;
+              return column === 0 || column === BOARD_COLUMNS - 1 ? (
+                <line key={`file-${column}`} x1={x} y1="50" x2={x} y2="950" />
+              ) : (
+                <g key={`file-${column}`}>
+                  <line x1={x} y1="50" x2={x} y2="450" />
+                  <line x1={x} y1="550" x2={x} y2="950" />
+                </g>
+              );
+            })}
+            <line x1="350" y1="50" x2="550" y2="250" />
+            <line x1="550" y1="50" x2="350" y2="250" />
+            <line x1="350" y1="750" x2="550" y2="950" />
+            <line x1="550" y1="750" x2="350" y2="950" />
+            <text x="240" y="519" textAnchor="middle">楚 河</text>
+            <text x="660" y="519" textAnchor="middle">汉 界</text>
+          </svg>
+          <div className="board-intersections">
+            {game.board.map((square, index) => {
+              const flipped = game.lastAction?.type === 'flip' && game.lastAction.at === index;
+              const moved = game.lastAction?.type === 'move' && game.lastAction.to === index;
+              const from = moved && game.lastAction?.type === 'move' ? game.lastAction.from : index;
+              const travel = moved ? {
+                '--travel-x': `${((from % BOARD_COLUMNS) - (index % BOARD_COLUMNS)) * 100 / 0.84}%`,
+                '--travel-y': `${(Math.floor(from / BOARD_COLUMNS) - Math.floor(index / BOARD_COLUMNS)) * 100 / 0.84}%`,
+              } as CSSProperties : undefined;
+              const classes = [
+                'square',
+                selected === index ? 'square--selected' : '',
+                destinations.includes(index) ? 'square--destination' : '',
+                game.lastAction && (game.lastAction.type === 'flip'
+                  ? game.lastAction.at === index
+                  : game.lastAction.from === index || game.lastAction.to === index) ? 'square--last-move' : '',
+              ].filter(Boolean).join(' ');
+              const label = `${squareLabel(square, index)}${destinations.includes(index) ? ', legal destination' : ''}`;
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  className={classes}
+                  onClick={() => onSquare(index)}
+                  disabled={!canPlay}
+                  aria-label={label}
+                  aria-pressed={square?.faceUp ? selected === index : undefined}
+                  title={label}
+                >
+                  {square && !square.faceUp && <span className="piece piece--hidden" aria-hidden="true">暗</span>}
+                  {square?.faceUp && (
+                    <span className={`piece piece--${square.piece.color}${flipped ? ' piece--flip' : ''}${moved ? ' piece--travel' : ''}`} style={travel} aria-hidden="true">
+                      {symbols[square.piece.rank][square.piece.color]}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
-      <div className="board-toolbar">
-        <span>{largeBoard ? 'Swipe ↔' : ''}</span>
-        <button className="board-zoom" type="button" aria-pressed={largeBoard} onClick={() => setLargeBoard((current) => !current)}>
-          {largeBoard ? 'Fit' : 'Zoom'}
-        </button>
-      </div>
     </div>
+  );
+}
+
+interface PlayerBarProps {
+  color: Color;
+  game: GameView;
+  mode: 'local' | 'online';
+  player: Player | null;
+  inCheck: boolean;
+  paused: boolean;
+  pending: boolean;
+}
+
+function PlayerBar({ color, game, mode, player, inCheck, paused, pending }: PlayerBarProps) {
+  const isYou = mode === 'online' && player !== null && game.colors[player] === color;
+  const isTurn = game.colors[game.turn] === color;
+  const removedColor = color === 'red' ? 'black' : 'red';
+  // Capture history records the removed piece, not its capturer (covered pieces can be self-captured).
+  const captures = game.captures.filter(({ piece }) => piece.color === removedColor);
+  let status = isYou ? 'Your turn' : 'To move';
+  if (game.outcome) status = game.colors[game.outcome.winner] === color ? 'Won' : 'Lost';
+  else if (inCheck) status = 'Check';
+  else if (!isTurn) status = 'Waiting';
+  else if (paused) status = 'Paused';
+  else if (pending) status = 'Sending';
+
+  return (
+    <section className={`player-bar${isTurn && !game.outcome ? ' player-bar--active' : ''}`} role="group" aria-label={`${colorName(color)} player`}>
+      <span className={`player-avatar player-avatar--${color}`} aria-hidden="true">{symbols.general[color]}</span>
+      <div className="player-name">
+        <strong>{colorName(color)}</strong>
+        {isYou && <span>You</span>}
+      </div>
+      {captures.length > 0 ? (
+        <div className="player-captures" role="group" aria-label={`${colorName(removedColor)} pieces removed`} tabIndex={0}>
+          {captures.map(({ piece, wasHidden }, index) => {
+            const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
+            return (
+              <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
+                {symbols[piece.rank][piece.color]}
+              </span>
+            );
+          })}
+        </div>
+      ) : <span className="player-captures" aria-hidden="true" />}
+      <span className={`player-status${inCheck && !game.outcome ? ' player-status--check' : ''}`}>{status}</span>
+    </section>
   );
 }
 
@@ -139,6 +179,7 @@ export default function App() {
   const [selected, setSelected] = useState<number | null>(null);
   const [joinCode, setJoinCode] = useState(initialRoom ?? '');
   const [copyMessage, setCopyMessage] = useState('');
+  const [largeBoard, setLargeBoard] = useState(false);
   const [sheet, setSheet] = useState<'online' | 'rules' | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const wasConnected = useRef(false);
@@ -185,6 +226,9 @@ export default function App() {
   const opponentColor = currentColor === 'red' ? 'black' : 'red';
   const opponentChecked = Boolean(game && currentColor && isInCheck(game.board, opponentColor));
   const statusColor = game?.outcome ? game.colors[game.outcome.winner] : currentColor;
+  const lastCapture = game?.lastAction?.type === 'move' && game.lastAction.captured ? game.lastAction : null;
+  const paused = mode === 'online' && (room.status !== 'connected' || !bothConnected);
+  const pending = mode === 'online' && room.pending;
 
   useEffect(() => {
     setSelected(null);
@@ -300,62 +344,70 @@ export default function App() {
       <header className="site-header">
         <div className="brand-mark" aria-hidden="true">棋</div>
         <h1>翻转象棋 <span>· Flip</span></h1>
-        <nav className="game-tools" aria-label="Game controls">
-          <button className="tool-button" type="button" onClick={startLocal} aria-label="New hotseat game" title="New hotseat game">↻</button>
-          <button className={`tool-button tool-button--online${mode === 'online' ? ' tool-button--active' : ''}`} type="button" onClick={() => setSheet('online')} aria-label="Online room" title="Online room">VS</button>
-          <button className="tool-button" type="button" onClick={() => setSheet('rules')} aria-label="How to play" title="How to play">?</button>
-        </nav>
       </header>
 
-      <section className="play-area" aria-label="Game">
-        <div className={`game-heading${checked && !game?.outcome ? ' game-heading--check' : ''}`}>
-          <div className="turn-copy" role="status" aria-live="polite">
-            <span className={`color-dot color-dot--${statusColor ?? 'unknown'}`}
-              role={statusColor ? 'img' : undefined} aria-label={statusColor ? colorName(statusColor) : undefined}
-              aria-hidden={statusColor ? undefined : true} />
-            <h2>{statusText()}</h2>
-          </div>
-          {game && game.pendingFlip !== null && canPlay && (
-            <button className="button button--finish" type="button" onClick={() => perform({ type: 'end-turn' })}>End turn</button>
+      <section className="game-layout" aria-label="Game">
+        <div className="board-column">
+          {game && (
+            <>
+              <PlayerBar color="black" game={game} mode={mode} player={room.player}
+                inCheck={currentColor === 'black' ? checked : opponentChecked} paused={paused} pending={pending} />
+              <Board game={game} selected={activeSelection} destinations={destinations} canPlay={canPlay}
+                largeBoard={largeBoard} onSquare={handleSquare} />
+              <PlayerBar color="red" game={game} mode={mode} player={room.player}
+                inCheck={currentColor === 'red' ? checked : opponentChecked} paused={paused} pending={pending} />
+            </>
           )}
-          {game?.outcome && (mode === 'local' ? (
-            <button className="button button--primary" type="button" onClick={startLocal}>Again</button>
-          ) : (
-            <button className="button button--primary" type="button" onClick={() => room.send({ type: 'rematch' })}
-              disabled={!room.connected[0] || !room.connected[1] || room.pending}>Rematch</button>
-          ))}
         </div>
 
-        {game && (
-          <Board game={game} selected={activeSelection} destinations={destinations} canPlay={canPlay} onSquare={handleSquare} />
-        )}
-
-        <p className="visually-hidden" role="status" aria-live="polite">
-          {game?.lastAction?.type === 'move' && game.lastAction.captured && (
-            <>Captured {game.lastAction.captured.piece.color === game.lastAction.piece.color ? 'own ' : ''}
-              {colorName(game.lastAction.captured.piece.color)} {game.lastAction.captured.piece.rank}
-              {game.lastAction.captured.wasHidden ? ', revealed on capture' : ''}.</>
-          )}
-        </p>
-        {game && game.captures.length > 0 && (
-          <div className="captured-list" role="group" aria-label="Captured pieces">
-            {game.captures.map(({ piece, wasHidden }, index) => {
-              const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
-              return (
-                <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
-                  {symbols[piece.rank][piece.color]}
-                </span>
-              );
-            })}
+        <aside className="side-rail" aria-label="Game options">
+          <div className="rail-heading" aria-hidden="true"><span>Game</span><span>{mode === 'local' ? 'Hotseat' : 'Online'}</span></div>
+          <nav className="game-tools" aria-label="Game controls">
+            <button className="tool-button" type="button" onClick={startLocal} aria-label="New hotseat game" title="New hotseat game">
+              <span className="tool-icon" aria-hidden="true">↻</span><span>New game</span>
+            </button>
+            <button className={`tool-button${mode === 'online' ? ' tool-button--active' : ''}`} type="button" onClick={() => setSheet('online')} aria-label="Online room" title="Online room">
+              <span className="tool-icon tool-icon--vs" aria-hidden="true">VS</span><span>Online</span>
+            </button>
+            <button className="tool-button" type="button" onClick={() => setSheet('rules')} aria-label="How to play" title="How to play">
+              <span className="tool-icon" aria-hidden="true">?</span><span>Rules</span>
+            </button>
+            <button className="tool-button tool-button--zoom" type="button" aria-label={largeBoard ? 'Fit board' : 'Zoom board'}
+              aria-pressed={largeBoard} onClick={() => setLargeBoard((current) => !current)}>
+              <span className="tool-icon" aria-hidden="true">{largeBoard ? '↔' : '⛶'}</span><span>{largeBoard ? 'Fit' : 'Zoom'}</span>
+            </button>
+          </nav>
+          <div className={`rail-status${checked && !game?.outcome ? ' rail-status--check' : ''}`}>
+            <div className="status-line">
+              <span className={`color-dot color-dot--${statusColor ?? 'unknown'}`} aria-hidden="true" />
+              <p role="status" aria-live="polite">
+                {statusText()}
+                {lastCapture?.captured && (
+                  <span className="visually-hidden">. {colorName(lastCapture.piece.color)} captured {lastCapture.captured.piece.color === lastCapture.piece.color ? 'their own ' : ''}
+                    {colorName(lastCapture.captured.piece.color)} {lastCapture.captured.piece.rank}
+                    {lastCapture.captured.wasHidden ? ', revealed on capture' : ''}.</span>
+                )}
+              </p>
+            </div>
+            {largeBoard && <span className="zoom-hint">Swipe board ↔</span>}
+            {game && game.pendingFlip !== null && canPlay && (
+              <button className="button button--finish" type="button" onClick={() => perform({ type: 'end-turn' })}>End turn</button>
+            )}
+            {game?.outcome && (mode === 'local' ? (
+              <button className="button button--primary" type="button" onClick={startLocal}>Again</button>
+            ) : (
+              <button className="button button--primary" type="button" onClick={() => room.send({ type: 'rematch' })}
+                disabled={!room.connected[0] || !room.connected[1] || room.pending}>Rematch</button>
+            ))}
           </div>
-        )}
+        </aside>
       </section>
 
       <dialog className="sheet" ref={dialogRef} aria-labelledby="sheet-title" onClose={() => setSheet(null)}
         onClick={(event) => { if (event.target === event.currentTarget) setSheet(null); }}>
         <div className="sheet-header">
           <h2 id="sheet-title">{sheet === 'rules' ? 'How to play' : 'Play online'}</h2>
-          <button className="tool-button" type="button" onClick={() => setSheet(null)} aria-label="Close">×</button>
+          <button className="sheet-close" type="button" onClick={() => setSheet(null)} aria-label="Close">×</button>
         </div>
         {sheet === 'rules' && (
           <div className="rules-panel">

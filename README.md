@@ -13,7 +13,9 @@ npm ci
 npm run dev
 ```
 
-Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: red plays first. Flip any covered piece. If it is your color, move that same piece immediately or choose **End turn**; if it is your opponent's color, the turn ends automatically. Alternatively, move an already revealed piece of your own color. Generals, advisors and elephants start face-up; the other covered backs look identical and their colors are mixed across the board. **New hotseat game** resets the board. On narrow phones, swipe the enlarged board sideways for larger tap targets, or choose **Fit board** to see it all at once.
+Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: red plays first. Flip any covered piece. If it is your color, move that same piece immediately or choose **End turn**; if it is your opponent's color, the turn ends automatically. Alternatively, move an already revealed piece of your own color. Generals, advisors and elephants start face-up; the other covered backs look identical and their colors are mixed across the board. **New game** resets hotseat. On narrow screens, choose **Zoom** and swipe the board sideways for larger tap targets, or choose **Fit** to see it all at once.
+
+Black stays above the board and Red below it, including online. Each player bar shows removed pieces of the opposing color. A self-captured covered piece also appears on the other color's bar: capture history records the removed piece, not who took it.
 
 ```sh
 npm test       # rules and WebSocket room tests
@@ -32,7 +34,7 @@ npm run server
 npm run dev
 ```
 
-1. Open the app, choose **Create online room**, and copy the invite link (or room code).
+1. Open the app, choose **Online** and **Create room**, and copy the invite link (or room code).
 2. Open the link in a second, separate browser session, or enter the code there. Player 1 is red and moves first; Player 2 is black. The board is enabled only for the player whose turn it is.
 3. For two devices on the same network, open the app on the host using `http://<host-LAN-IP>:5173/` **before** creating the room, and share the resulting link. `localhost` in a link refers to each device itself. Vite listens on network interfaces; allow port 5173 through the host firewall if necessary.
 
