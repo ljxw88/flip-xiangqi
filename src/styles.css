@@ -1,0 +1,159 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #23382f;
+  background: #f5f0e5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: radial-gradient(ellipse at top left, #fffaf0 0, #f5f0e5 50%, #eee8d9 100%);
+}
+
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 3px solid #b36c34; outline-offset: 3px; }
+
+.app-shell { width: min(1220px, calc(100% - 48px)); margin: 0 auto; }
+.site-header { display: flex; align-items: center; gap: 15px; padding: 35px 0 31px; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 53px;
+  height: 53px;
+  color: #f3e8ce;
+  background: #264b3c;
+  border-radius: 50%;
+  border: 2px solid #c6a772;
+  box-shadow: 0 0 0 3px #264b3c;
+  font-family: Georgia, serif;
+  font-size: 29px;
+}
+h1, h2, p { margin: 0; }
+h1, h2 { font-family: Georgia, serif; }
+h1 { font-size: clamp(22px, 3vw, 31px); letter-spacing: -0.045em; }
+h1 span { color: #aa4430; font-family: Georgia, serif; font-size: 0.8em; letter-spacing: 0; }
+.eyebrow { color: #987455; font-size: 10px; font-weight: 700; letter-spacing: 0.16em; line-height: 1.5; text-transform: uppercase; }
+.site-header .eyebrow { margin-bottom: 4px; }
+.mode-label { margin-left: auto; padding: 8px 11px; color: #536e5d; background: #e5eadc; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: 0.11em; white-space: nowrap; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 324px; gap: 28px; align-items: start; }
+.play-area, .panel { background: rgba(255, 253, 247, 0.93); border: 1px solid #e7dccb; border-radius: 14px; box-shadow: 0 7px 24px #3e342511; }
+.play-area { padding: clamp(18px, 3vw, 30px); }
+.game-heading { min-height: 102px; display: flex; align-items: flex-start; }
+.game-heading h2 { margin-top: 5px; color: #273f33; font-size: clamp(21px, 2.7vw, 28px); line-height: 1.25; }
+.game-heading p:last-child { margin-top: 8px; color: #6c7769; font-size: 13px; line-height: 1.5; }
+
+.board-frame { padding: clamp(9px, 1.5vw, 15px); background: #624838; border: 1px solid #543d30; border-radius: 10px; box-shadow: inset 0 1px #a78968, 0 4px 10px #34261922; }
+.board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: clamp(3px, 0.7vw, 7px); }
+.square {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid #c29c66;
+  border-radius: 4px;
+  background: #e7c995;
+  box-shadow: inset 0 1px 4px #63412720;
+}
+.square:not(:disabled):hover { background: #f2dba9; }
+.square--destination::after, .square--selected::after { content: ''; position: absolute; inset: 2px; border: 3px solid #35866a; border-radius: 4px; pointer-events: none; }
+.square--selected::after { border-color: #b35337; }
+.piece {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 81%;
+  aspect-ratio: 1;
+  border: 2px solid #ab8a5e;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 25%, #fff9e7, #f1dfb5 72%, #dcc493);
+  box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #e2c99c;
+  font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif;
+  font-size: clamp(18px, 3.7vw, 38px);
+  font-weight: 700;
+  line-height: 1;
+}
+.piece--red { color: #ae342a; }
+.piece--black { color: #202d2a; }
+.piece--hidden { color: #e8d0a3; border-color: #355c49; background: radial-gradient(circle at 35% 25%, #456e58, #214939); box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #557961; font-size: clamp(15px, 2.8vw, 27px); }
+.empty-mark { width: 5px; height: 5px; border-radius: 50%; background: #b78e5d77; }
+.board-placeholder { min-height: 260px; display: grid; place-items: center; border: 1px dashed #d9cbb6; border-radius: 10px; color: #8a9184; font-size: 14px; }
+
+.players { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 19px; }
+.player-card { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 12px; border: 1px solid #e9e3d8; border-radius: 8px; }
+.player-card--active { border-color: #99b6a4; background: #f3f8f1; }
+.color-dot { flex: 0 0 13px; width: 13px; height: 13px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #cbbba5; }
+.color-dot--red { background: #ac3d31; }
+.color-dot--black { background: #26382f; }
+.color-dot--unknown { background: #d0c8b7; }
+.player-card strong, .player-card div > span { display: block; }
+.player-card strong { font-size: 12px; }
+.player-card div > span { margin-top: 3px; color: #8a8e80; font-size: 11px; }
+.turn-badge { margin-left: auto; color: #58806a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.result-actions { margin-top: 18px; }
+
+.sidebar { display: grid; gap: 16px; }
+.panel { padding: 23px; }
+.panel h2 { margin-top: 5px; font-size: 19px; }
+.button-stack { display: grid; gap: 9px; margin-top: 18px; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 9px 14px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 700; line-height: 1.25; white-space: nowrap; }
+.button--primary { color: #fffdf4; background: #285443; border-color: #285443; }
+.button--primary:hover:not(:disabled) { background: #1f4435; }
+.button--secondary { color: #3f5d4d; background: #fffdf8; border-color: #cdd7c9; }
+.button--secondary:hover:not(:disabled) { background: #f0f5ed; }
+.button:disabled { opacity: 0.55; }
+.join-form, .room-details { margin-top: 19px; padding-top: 17px; border-top: 1px solid #eee6da; }
+label { display: block; margin-bottom: 7px; color: #667365; font-size: 11px; font-weight: 700; }
+.copy-row { display: flex; gap: 7px; }
+input { min-width: 0; width: 100%; height: 40px; padding: 8px 9px; color: #344b3d; background: #fcfaf4; border: 1px solid #dcded2; border-radius: 6px; font-size: 12px; }
+input::placeholder { color: #a4aa9f; }
+.room-code { margin-bottom: 13px; color: #738071; font-size: 12px; }
+.room-code strong { margin-left: 4px; color: #28483a; letter-spacing: 0.08em; }
+.small-note { margin-top: 7px; color: #899183; font-size: 11px; line-height: 1.45; }
+.error { margin-top: 14px; color: #a33327; font-size: 12px; line-height: 1.5; }
+.reconnect { width: 100%; margin-top: 12px; }
+.rules-panel ol { display: grid; gap: 10px; margin: 17px 0 0; padding-left: 19px; color: #68796b; font-size: 12px; line-height: 1.5; }
+.rules-panel li { padding-left: 3px; }
+.rules-panel li::marker { color: #b78a5c; font-weight: 700; }
+.rank-order { margin-top: 17px; padding-top: 15px; border-top: 1px solid #eee6da; color: #788577; font-size: 11px; line-height: 1.7; }
+.rank-order strong { display: block; color: #3d5948; }
+footer { padding: 25px 0 35px; color: #a19986; font-size: 11px; text-align: center; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .piece { font-size: clamp(18px, 5vw, 38px); }
+  .piece--hidden { font-size: clamp(15px, 4vw, 27px); }
+}
+
+@media (max-width: 560px) {
+  .app-shell { width: min(100% - 24px, 1220px); }
+  .site-header { gap: 12px; padding: 23px 3px; }
+  .brand-mark { flex-basis: 42px; height: 42px; font-size: 24px; }
+  .site-header .eyebrow { font-size: 8px; }
+  .mode-label { padding: 7px; font-size: 8px; }
+  .layout { gap: 14px; }
+  .play-area { padding: 15px 10px; }
+  .game-heading { min-height: 95px; padding: 0 5px; }
+  .board-frame { padding: 7px; }
+  .board { gap: 3px; }
+  .square { border-radius: 3px; }
+  .piece { border-width: 1px; box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #e2c99c; font-size: clamp(17px, 5vw, 25px); }
+  .piece--hidden { box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #557961; font-size: clamp(14px, 4vw, 20px); }
+  .square--destination::after, .square--selected::after { inset: 1px; border-width: 2px; }
+  .players { gap: 7px; margin-top: 13px; }
+  .player-card { gap: 7px; padding: 9px 7px; }
+  .player-card strong { font-size: 11px; }
+  .turn-badge { display: none; }
+  .sidebar { grid-template-columns: 1fr; }
+  .panel { padding: 19px; }
+}
