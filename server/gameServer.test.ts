@@ -125,6 +125,12 @@ describe('WebSocket rooms', () => {
   });
 
   it('assigns sides, conceals both players’ covered identities and enforces legal turns', async () => {
+    const red = at(6, 0);
+    const black = at(3, 0);
+    await useGameFactory(() => customPosition([
+      [6, 0, { faceUp: false, color: 'red', rank: 'rook' }],
+      [3, 0, { faceUp: false, color: 'black', rank: 'horse' }],
+    ]));
     const { host, guest, hostSeat, guestSeat, waiting, joined } = await pair();
     expect(hostSeat.player).toBe(0);
     expect(guestSeat.player).toBe(1);
@@ -135,18 +141,16 @@ describe('WebSocket rooms', () => {
     expect(joined.game.board).toHaveLength(90);
     expect(joined.game.colors).toEqual(['red', 'black']);
     const hidden = joined.game.board.filter((square) => square && !square.faceUp);
-    expect(hidden).toHaveLength(32);
+    expect(hidden).toHaveLength(2);
     expect(hidden.every((square) => square && !square.faceUp &&
       !('color' in square) && !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
-    const red = at(9, 4);
-    const black = at(0, 4);
 
     const third = await connect();
     third.send({ type: 'join', room: hostSeat.room });
     expect((await third.next('error')).message).toMatch(/two players/i);
     guest.send({ type: 'action', action: { type: 'flip', at: black } });
     expect((await guest.next('error')).message).toMatch(/not your turn/i);
-    host.send({ type: 'action', action: { type: 'move', from: red, to: at(5, 0) } });
+    host.send({ type: 'action', action: { type: 'move', from: red, to: at(4, 0) } });
     expect((await host.next('error')).message).toMatch(/not a legal action/i);
 
     host.send({ type: 'action', action: { type: 'flip', at: red } });
@@ -269,17 +273,14 @@ describe('WebSocket rooms', () => {
     expect(flipped.game.turn).toBe(0);
   });
 
-  it('reveals the fixed general and advisor on their standard points in a mixed room', async () => {
+  it('deals generals, advisors and elephants face-up and the rest covered in a room', async () => {
     await useGameFactory(() => createGame(() => 0.999999));
-    const { host, guest } = await pair();
-    host.send({ type: 'action', action: { type: 'flip', at: at(9, 4) } });
-    const general = await guest.next('state', (message) => message.game.pendingFlip === at(9, 4));
-    expect(general.game.board[at(9, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'general' } });
-    host.send({ type: 'action', action: { type: 'end-turn' } });
-    await guest.next('state', (message) => message.game.turn === 1 && message.game.pendingFlip === null);
-    guest.send({ type: 'action', action: { type: 'flip', at: at(0, 3) } });
-    const advisor = await host.next('state', (message) => message.game.pendingFlip === at(0, 3));
-    expect(advisor.game.board[at(0, 3)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'advisor' } });
+    const { joined } = await pair();
+    expect(joined.game.board[at(9, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'general' } });
+    expect(joined.game.board[at(0, 3)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'advisor' } });
+    expect(joined.game.board[at(0, 2)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'elephant' } });
+    expect(joined.game.board.filter((square) => square && !square.faceUp)).toHaveLength(22);
+    expect(joined.game.board.filter((square) => square?.faceUp)).toHaveLength(10);
   });
 
   it('rejects moves exposing the general even when the piece movement itself is valid', async () => {
@@ -354,9 +355,13 @@ describe('WebSocket rooms', () => {
   });
 
   it('pauses on disconnect and resumes the same seat and game with its session token', async () => {
+    const red = at(6, 0);
+    const black = at(3, 0);
+    await useGameFactory(() => customPosition([
+      [6, 0, { faceUp: false, color: 'red', rank: 'rook' }],
+      [3, 0, { faceUp: false, color: 'black', rank: 'horse' }],
+    ]));
     const { host, guest, hostSeat } = await pair();
-    const red = at(9, 4);
-    const black = at(0, 4);
     host.send({ type: 'action', action: { type: 'flip', at: red } });
     const before = await guest.next('state', (message) => message.game.pendingFlip === red);
     host.socket.close();
@@ -417,7 +422,7 @@ describe('WebSocket rooms', () => {
     expect(rematch.game.turn).toBe(0);
     expect(rematch.game.colors).toEqual(['red', 'black']);
     expect(rematch.game.outcome).toBeNull();
-    expect(rematch.game.board.filter((square) => square && !square.faceUp)).toHaveLength(32);
+    expect(rematch.game.board.filter((square) => square && !square.faceUp)).toHaveLength(22);
   });
 
   it('reveals a covered general even into check, then broadcasts its capture as a win', async () => {

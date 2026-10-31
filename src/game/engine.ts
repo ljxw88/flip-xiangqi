@@ -125,7 +125,7 @@ function legalStartingPoint(rank: Rank, color: Color, index: number): boolean {
   return pseudoMovesFrom(board, index).length > 0;
 }
 
-/** Deal both colors across the 32 standard points, reserving constrained pieces first. */
+/** Deal both colors across the 32 standard points: generals, advisors and elephants face-up, the rest covered. */
 export function createGame(random: () => number = Math.random): GameState {
   const board: Square[] = Array(BOARD_SIZE).fill(null);
   const slots: number[] = [];
@@ -140,22 +140,22 @@ export function createGame(random: () => number = Math.random): GameState {
   }
   slots.sort((a, b) => a - b);
 
-  // Generals and advisors stay on their standard home-rank points.
+  // Generals and advisors stay on their standard home-rank points and start face-up.
   for (const color of ['red', 'black'] as const) {
     const homeRow = color === 'red' ? 9 : 0;
     for (const [column, rank] of [[3, 'advisor'], [4, 'general'], [5, 'advisor']] as const) {
       const index = indexAt(homeRow, column);
       if (!legalStartingPoint(rank, color, index)) throw new Error('No valid starting arrangement.');
-      board[index] = { faceUp: false, color, rank };
+      board[index] = { faceUp: true, piece: { color, rank } };
     }
   }
 
-  // Reserve legal elephant landings, then shuffle all other pieces across the remaining points.
+  // Reserve legal elephant landings (face-up), then shuffle all other pieces covered across the remaining points.
   for (const color of ['red', 'black'] as const) {
     const candidates = slots.filter((index) => !board[index] && legalStartingPoint('elephant', color, index));
     if (candidates.length < 2) throw new Error('No valid starting arrangement.');
     shuffle(candidates, random);
-    for (const index of candidates.slice(0, 2)) board[index] = { faceUp: false, color, rank: 'elephant' };
+    for (const index of candidates.slice(0, 2)) board[index] = { faceUp: true, piece: { color, rank: 'elephant' } };
   }
 
   const remaining: Piece[] = [];

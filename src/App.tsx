@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import {
   applyAction,
   BOARD_COLUMNS,
@@ -11,7 +11,6 @@ import {
   type Action,
   type Color,
   type GameView,
-  type Player,
   type PublicSquare,
   type Rank,
 } from './game/engine';
@@ -47,15 +46,9 @@ interface BoardProps {
 }
 
 function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) {
-  const [largeBoard, setLargeBoard] = useState(() => window.matchMedia('(max-width: 480px)').matches);
+  const [largeBoard, setLargeBoard] = useState(false);
   return (
     <div className="board-shell">
-      <div className="board-toolbar">
-        <span>9 × 10 · 棋盘</span>
-        <button className="board-zoom" type="button" aria-pressed={largeBoard} onClick={() => setLargeBoard((current) => !current)}>
-          {largeBoard ? 'Fit board' : 'Larger board'}
-        </button>
-      </div>
       <div className="board-scroll" role="region" aria-label="Game board; scroll horizontally when enlarged" tabIndex={largeBoard ? 0 : undefined}>
         <div className={`board-frame${largeBoard ? ' board-frame--large' : ''}`}>
           <div className="board" role="group" aria-label="Nine by ten xiangqi board, black palace at the top and red palace at the bottom; colors are mixed">
@@ -83,6 +76,13 @@ function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) 
             </svg>
             <div className="board-intersections">
               {game.board.map((square, index) => {
+                const flipped = game.lastAction?.type === 'flip' && game.lastAction.at === index;
+                const moved = game.lastAction?.type === 'move' && game.lastAction.to === index;
+                const from = moved && game.lastAction?.type === 'move' ? game.lastAction.from : index;
+                const travel = moved ? {
+                  '--travel-x': `${((from % BOARD_COLUMNS) - (index % BOARD_COLUMNS)) * 100 / 0.84}%`,
+                  '--travel-y': `${(Math.floor(from / BOARD_COLUMNS) - Math.floor(index / BOARD_COLUMNS)) * 100 / 0.84}%`,
+                } as CSSProperties : undefined;
                 const classes = [
                   'square',
                   selected === index ? 'square--selected' : '',
@@ -105,7 +105,7 @@ function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) 
                   >
                     {square && !square.faceUp && <span className="piece piece--hidden" aria-hidden="true">暗</span>}
                     {square?.faceUp && (
-                      <span className={`piece piece--${square.piece.color}`} aria-hidden="true">
+                      <span className={`piece piece--${square.piece.color}${flipped ? ' piece--flip' : ''}${moved ? ' piece--travel' : ''}`} style={travel} aria-hidden="true">
                         {symbols[square.piece.rank][square.piece.color]}
                       </span>
                     )}
@@ -116,7 +116,12 @@ function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) 
           </div>
         </div>
       </div>
-      {largeBoard && <p className="board-scroll-hint">Swipe sideways to see the whole board ↔</p>}
+      <div className="board-toolbar">
+        <span>{largeBoard ? 'Swipe ↔' : ''}</span>
+        <button className="board-zoom" type="button" aria-pressed={largeBoard} onClick={() => setLargeBoard((current) => !current)}>
+          {largeBoard ? 'Fit' : 'Zoom'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -135,11 +140,31 @@ export default function App() {
   const [boardMessage, setBoardMessage] = useState('');
   const [joinCode, setJoinCode] = useState(initialRoom ?? '');
   const [copyMessage, setCopyMessage] = useState('');
+  const [sheet, setSheet] = useState<'online' | 'rules' | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const wasConnected = useRef(false);
   const room = useRoom();
 
   useEffect(() => {
     if (initialRoom) room.join(initialRoom);
   }, [initialRoom, room.join]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (sheet && !dialog.open) dialog.showModal();
+    else if (!sheet && dialog.open) dialog.close();
+  }, [sheet]);
+
+  const bothConnected = room.connected[0] && room.connected[1];
+  useEffect(() => {
+    if (bothConnected && !wasConnected.current && sheet === 'online') setSheet(null);
+    wasConnected.current = bothConnected;
+  }, [bothConnected, sheet]);
+
+  useEffect(() => {
+    if (mode === 'online' && (room.status === 'failed' || room.status === 'disconnected')) setSheet('online');
+  }, [mode, room.status]);
 
   const game = mode === 'local' ? toGameView(localGame) : room.game;
   const canPlay = Boolean(
@@ -185,7 +210,7 @@ export default function App() {
     if (activeSelection !== null && destinations.includes(index)) {
       perform({ type: 'move', from: activeSelection, to: index });
     } else if (game.pendingFlip !== null) {
-      setBoardMessage('Move the flipped piece or end your turn.');
+      setBoardMessage('Move it or end your turn.');
     } else if (square && !square.faceUp) {
       if (!checked) perform({ type: 'flip', at: index });
     } else if (square && squareColor(square) === currentColor) {
@@ -202,6 +227,7 @@ export default function App() {
     setLocalGame(createGame());
     setSelected(null);
     setMode('local');
+    setSheet(null);
   }
 
   function createRoom() {
@@ -243,212 +269,152 @@ export default function App() {
       if (room.status === 'connecting') return 'Reconnecting…';
       if (room.status !== 'connected') return 'Connection lost';
       if (!room.connected[0] || !room.connected[1]) return 'Waiting for the other player';
-      if (room.pending) return 'Sending your move…';
-      return room.player === game.turn ? 'Your turn' : 'Opponent’s turn';
+      if (room.pending) return 'Sending…';
+      return room.player === game.turn ? 'Your turn' : 'Their turn';
     }
-    return `Player ${game.turn + 1}’s turn`;
+    return `${colorName(game.colors[game.turn])} to play`;
   }
 
   function guidance(): string {
-    if (!game) return 'Start the room server to play online, or choose hotseat play.';
+    if (!game) return room.status === 'connecting' ? 'Joining room…' : 'Choose a game.';
     if (game.outcome?.reason === 'general-captured') {
       const action = game.lastAction;
       if (action?.type === 'move' && action.captured?.piece.color === action.piece.color) {
-        return 'A player captured their own covered general and loses.';
+        return 'Own general captured.';
       }
       return action?.type === 'move' && action.captured?.wasHidden
-        ? 'The covered general was captured and revealed.'
-        : 'The revealed general was captured.';
+        ? 'Covered general captured!' : 'General captured!';
     }
-    if (game.outcome?.reason === 'checkmate') return 'Checkmate — the opposing general cannot escape.';
-    if (game.outcome?.reason === 'stalemate') return 'Stalemate — the player with no legal move loses.';
-    if (mode === 'online' && room.status !== 'connected') return 'Reconnect to continue the same game.';
+    if (game.outcome?.reason === 'checkmate') return 'Checkmate!';
+    if (game.outcome?.reason === 'stalemate') return 'No legal moves.';
+    if (mode === 'online' && room.status !== 'connected') return 'Reconnect to continue.';
     if (mode === 'online' && (!room.connected[0] || !room.connected[1])) {
-      return 'Share the room link below. The game pauses if either player disconnects.';
+      return 'Waiting for your opponent.';
     }
     if (game.pendingFlip !== null) {
-      if (mode === 'online' && room.player !== game.turn) return 'Your opponent may move the flipped piece or end the turn.';
+      if (mode === 'online' && room.player !== game.turn) return 'They may move or end their turn.';
       if (boardMessage) return boardMessage;
-      if (checked) return 'Your general is in check. Move the flipped piece to safety, or end your turn.';
-      return destinations.length ? 'Move the flipped piece now, or end your turn.' : 'This piece has no legal move. End your turn.';
+      if (checked) return 'Check! Move it or end your turn.';
+      return destinations.length ? 'Move it or end your turn.' : 'No move. End your turn.';
     }
-    if (checked) return 'Check! Move to protect your general; flipping cannot resolve check.';
-    if (opponentChecked) return `${colorName(opponentColor)}’s revealed general is in check.`;
-    if (mode === 'online' && room.player !== game.turn) return 'Waiting for your opponent to play.';
+    if (checked) return 'Check! Protect your general.';
+    if (opponentChecked) return `${colorName(opponentColor)} is in check!`;
+    if (mode === 'online' && room.player !== game.turn) return 'Waiting…';
     if (boardMessage) return boardMessage;
     const square = selected === null ? null : game.board[selected];
-    if (square) return destinations.length ? 'Choose a highlighted destination.' : 'This piece has no legal moves.';
-    return 'Flip any covered piece, or move one of your revealed pieces.';
-  }
-
-  function playerCard(player: Player) {
-    const color = game?.colors[player] ?? null;
-    const active = game && !game.outcome && game.turn === player;
-    return (
-      <div key={player} className={`player-card${active ? ' player-card--active' : ''}`}>
-        <span className={`color-dot color-dot--${color ?? 'unknown'}`} aria-hidden="true" />
-        <div>
-          <strong>Player {player + 1}{mode === 'online' && room.player === player ? ' · You' : ''}</strong>
-          <span>{colorName(color)}{mode === 'online' && !room.connected[player] ? ' · Offline' : ''}</span>
-        </div>
-        {active && <span className="turn-badge">Turn</span>}
-      </div>
-    );
+    if (square) return destinations.length ? 'Choose a destination.' : 'No legal moves.';
+    return 'Flip any · move yours';
   }
 
   return (
     <main className="app-shell">
       <header className="site-header">
         <div className="brand-mark" aria-hidden="true">棋</div>
-        <div>
-          <p className="eyebrow">A little game of strategy &amp; luck</p>
-          <h1>翻转象棋 <span>· Flip</span></h1>
-        </div>
-        <div className="mode-label">{mode === 'local' ? 'HOTSEAT' : 'ONLINE ROOM'}</div>
+        <h1>翻转象棋 <span>· Flip</span></h1>
+        <nav className="game-tools" aria-label="Game controls">
+          <button className="tool-button" type="button" onClick={startLocal} aria-label="New hotseat game" title="New hotseat game">↻</button>
+          <button className={`tool-button tool-button--online${mode === 'online' ? ' tool-button--active' : ''}`} type="button" onClick={() => setSheet('online')} aria-label="Online room" title="Online room">VS</button>
+          <button className="tool-button" type="button" onClick={() => setSheet('rules')} aria-label="How to play" title="How to play">?</button>
+        </nav>
       </header>
 
-      <div className="layout">
-        <section className="play-area" aria-label="Game">
-          <div className="game-heading" role="status" aria-live="polite">
-            <div>
-              <p className="eyebrow">{game?.outcome ? 'Game over' : 'Flip · Move · Capture'}</p>
-              <h2>{heading()}</h2>
-              <p>{guidance()}</p>
-            </div>
+      <section className="play-area" aria-label="Game">
+        <div className={`game-heading${checked && !game?.outcome ? ' game-heading--check' : ''}`} role="status" aria-live="polite">
+          <span className={`color-dot color-dot--${currentColor ?? 'unknown'}`} aria-hidden="true" />
+          <div className="turn-copy">
+            <p className="eyebrow">{game?.outcome ? 'Game over' : currentColor ? `${colorName(currentColor)} · ${mode === 'online' ? 'Online' : 'Hotseat'}` : 'Online'}</p>
+            <h2>{heading()}</h2>
+            <p>{guidance()}</p>
           </div>
-
           {game && game.pendingFlip !== null && canPlay && (
-            <div className="turn-actions">
-              <button className="button button--finish" type="button" onClick={() => perform({ type: 'end-turn' })}>End turn</button>
-              <span>Or move the flipped piece</span>
-            </div>
+            <button className="button button--finish" type="button" onClick={() => perform({ type: 'end-turn' })}>End turn</button>
           )}
-
-          {game ? (
-            <Board game={game} selected={activeSelection} destinations={destinations} canPlay={canPlay} onSquare={handleSquare} />
+          {game?.outcome && (mode === 'local' ? (
+            <button className="button button--primary" type="button" onClick={startLocal}>Again</button>
           ) : (
-            <div className="board-placeholder">Your game will appear here.</div>
-          )}
+            <button className="button button--primary" type="button" onClick={() => room.send({ type: 'rematch' })}
+              disabled={!room.connected[0] || !room.connected[1] || room.pending}>Rematch</button>
+          ))}
+        </div>
 
-          {game?.lastAction?.type === 'flip' && (
-            <p className="capture-note" role="status" aria-live="polite">
-              Flipped: {colorName(game.lastAction.piece.color)} {game.lastAction.piece.rank}{' '}
-              ({symbols[game.lastAction.piece.rank][game.lastAction.piece.color]}).
-              {game.pendingFlip !== null ? ' It may move now, or the player may end the turn.' : ' The turn is over.'}
-            </p>
-          )}
-          {game?.lastAction?.type === 'move' && game.lastAction.captured && (
-            <p className="capture-note" role="status" aria-live="polite">
-              Captured: {game.lastAction.captured.piece.color === game.lastAction.piece.color ? 'own ' : ''}
-              {colorName(game.lastAction.captured.piece.color)} {game.lastAction.captured.piece.rank}{' '}
-              ({symbols[game.lastAction.captured.piece.rank][game.lastAction.captured.piece.color]})
-              {game.lastAction.captured.wasHidden ? ' — revealed on capture.' : '.'}
-            </p>
-          )}
+        {game ? (
+          <Board game={game} selected={activeSelection} destinations={destinations} canPlay={canPlay} onSquare={handleSquare} />
+        ) : (
+          <div className="board-placeholder">{room.status === 'connecting' ? 'Connecting…' : 'No room connected'}</div>
+        )}
 
-          {game && game.captures.length > 0 && (
-            <div className="captured-list" aria-label="Captured pieces">
-              <strong>Captured</strong>
-              {game.captures.map(({ piece, wasHidden }, index) => {
-                const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
-                return (
-                  <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
-                    {symbols[piece.rank][piece.color]}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="players" aria-label="Players">
-            {playerCard(0)}
-            {playerCard(1)}
+        {game?.lastAction?.type === 'move' && game.lastAction.captured && (
+          <p className="capture-note" role="status" aria-live="polite">
+            Captured {game.lastAction.captured.piece.color === game.lastAction.piece.color ? 'own ' : ''}
+            {colorName(game.lastAction.captured.piece.color)} {game.lastAction.captured.piece.rank}{' '}
+            {symbols[game.lastAction.captured.piece.rank][game.lastAction.captured.piece.color]}
+            {game.lastAction.captured.wasHidden ? ' · revealed' : ''}
+          </p>
+        )}
+        {game && game.captures.length > 0 && (
+          <div className="captured-list" aria-label="Captured pieces">
+            {game.captures.map(({ piece, wasHidden }, index) => {
+              const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
+              return (
+                <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
+                  {symbols[piece.rank][piece.color]}
+                </span>
+              );
+            })}
           </div>
+        )}
+      </section>
 
-          {game?.outcome && (
-            <div className="result-actions">
-              {mode === 'local' ? (
-                <button className="button button--primary" type="button" onClick={startLocal}>Play again</button>
-              ) : (
-                <button
-                  className="button button--primary"
-                  type="button"
-                  onClick={() => room.send({ type: 'rematch' })}
-                  disabled={!room.connected[0] || !room.connected[1] || room.pending}
-                >Start rematch</button>
-              )}
-            </div>
-          )}
-        </section>
-
-        <aside className="sidebar">
-          <section className="panel">
-            <p className="eyebrow">Play together</p>
-            <h2>{mode === 'online' ? 'Online room' : 'Choose a game'}</h2>
-            <div className="button-stack">
-              <button className="button button--primary" type="button" onClick={createRoom}>
-                {mode === 'online' ? 'Create new room' : 'Create online room'}
-              </button>
-              <button className="button button--secondary" type="button" onClick={startLocal}>
-                {mode === 'online' ? 'Leave & play hotseat' : 'New hotseat game'}
-              </button>
-            </div>
-
-            {mode === 'online' && room.room && room.player !== null && (
+      <dialog className="sheet" ref={dialogRef} aria-labelledby="sheet-title" onClose={() => setSheet(null)}
+        onClick={(event) => { if (event.target === event.currentTarget) setSheet(null); }}>
+        <div className="sheet-header">
+          <h2 id="sheet-title">{sheet === 'rules' ? 'How to play' : 'Play online'}</h2>
+          <button className="tool-button" type="button" onClick={() => setSheet(null)} aria-label="Close">×</button>
+        </div>
+        {sheet === 'rules' && (
+          <div className="rules-panel">
+            <ol>
+              <li>Red plays first. Generals, advisors and elephants start face-up; every other piece is covered and colors are mixed.</li>
+              <li>Flip any covered piece. If it is yours, move it now or end your turn; otherwise your turn ends.</li>
+              <li>Move only your revealed pieces. You may capture any covered piece, even your own.</li>
+              <li>Use xiangqi movement. Capture or checkmate the enemy general to win; capturing your own general loses.</li>
+              <li>A covered general cannot be checked. In check, move to safety; no legal action is a loss.</li>
+            </ol>
+          </div>
+        )}
+        {sheet === 'online' && (
+          <div className="online-panel">
+            {mode === 'online' && room.room && room.player !== null ? (
               <div className="room-details">
                 <p className="room-code">Room <strong>{room.room}</strong></p>
-                <label htmlFor="room-link">Invite your opponent</label>
+                <label htmlFor="room-link">Invite link</label>
                 <div className="copy-row">
                   <input id="room-link" value={roomLink(room.room)} readOnly onFocus={(event) => event.currentTarget.select()} />
                   <button className="button button--secondary" type="button" onClick={() => copyLink(room.room!)}>Copy</button>
                 </div>
-                <p className="small-note" aria-live="polite">{copyMessage || 'Open this link in another browser.'}</p>
+                <p className="small-note" aria-live="polite">{copyMessage || (bothConnected ? 'Both players connected.' : 'Share with a friend.')}</p>
               </div>
+            ) : (
+              <>
+                <button className="button button--primary button--wide" type="button" onClick={createRoom} disabled={room.status === 'connecting'}>Create room</button>
+                <form className="join-form" onSubmit={joinRoom}>
+                  <label htmlFor="room-code">Join with a code</label>
+                  <div className="copy-row">
+                    <input id="room-code" value={joinCode} onChange={(event) => setJoinCode(event.currentTarget.value.toUpperCase())}
+                      placeholder="8-character code" maxLength={8} pattern="[0-9A-Fa-f]{8}" autoComplete="off" spellCheck={false} required />
+                    <button className="button button--secondary" type="submit">Join</button>
+                  </div>
+                </form>
+              </>
             )}
-
             {mode === 'online' && room.error && <p className="error" role="alert">{room.error}</p>}
             {mode === 'online' && (room.status === 'disconnected' || room.status === 'failed') && (
-              <button
-                className="button button--secondary reconnect"
-                type="button"
-                onClick={() => room.room ? room.join(room.room) : room.create()}
-              >{room.room ? 'Reconnect' : 'Try again'}</button>
+              <button className="button button--secondary button--wide reconnect" type="button"
+                onClick={() => room.room ? room.join(room.room) : room.create()}>{room.room ? 'Reconnect' : 'Try again'}</button>
             )}
-
-            <form className="join-form" onSubmit={joinRoom}>
-              <label htmlFor="room-code">Or join with a room code</label>
-              <div className="copy-row">
-                <input
-                  id="room-code"
-                  value={joinCode}
-                  onChange={(event) => setJoinCode(event.currentTarget.value.toUpperCase())}
-                  placeholder="8-character code"
-                  maxLength={8}
-                  pattern="[0-9A-Fa-f]{8}"
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                />
-                <button className="button button--secondary" type="submit">Join</button>
-              </div>
-            </form>
-          </section>
-
-          <section className="panel rules-panel">
-            <p className="eyebrow">The essentials</p>
-            <h2>How to play</h2>
-            <ol>
-              <li>Red plays first. All 32 pieces start covered and colors are mixed across both sides.</li>
-              <li>Flip any covered piece. If it is your color, you may move it immediately; if not, your turn ends.</li>
-              <li>Covered pieces block but cannot move or attack. Capture any covered piece—even your own—to reveal it.</li>
-              <li>Move only your own revealed pieces, using true xiangqi movement, including palace and river limits.</li>
-              <li>Capture the enemy general or checkmate it when revealed to win. Capturing your own general loses.</li>
-            </ol>
-            <p className="rank-order"><strong>Remember</strong> A covered general can be captured but not checked. A player in check must move to safety; no legal action is a loss.</p>
-          </section>
-        </aside>
-      </div>
-      <footer>Made for playing together, one reveal at a time.</footer>
+          </div>
+        )}
+      </dialog>
     </main>
   );
 }

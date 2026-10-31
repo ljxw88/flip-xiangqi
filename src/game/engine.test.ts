@@ -42,8 +42,14 @@ const move = (fromRow: number, fromColumn: number, toRow: number, toColumn: numb
 const flip = (row: number, column: number): Action => ({ type: 'flip', at: at(row, column) });
 const endTurn: Action = { type: 'end-turn' };
 
-describe('full-cover setup', () => {
-  it('places all 32 pieces face-down on standard starting points, including the generals', () => {
+describe('opening setup', () => {
+  const FACE_UP_RANKS: readonly Rank[] = ['general', 'advisor', 'elephant'];
+  const seeded = (seed: number) => {
+    let value = seed;
+    return () => ((value = (Math.imul(1664525, value) + 1013904223) | 0) >>> 0) / 2 ** 32;
+  };
+
+  it('reveals generals, advisors and elephants and covers the other 22 pieces on standard points', () => {
     const game = createGame(() => 0);
     expect([BOARD_ROWS, BOARD_COLUMNS, BOARD_SIZE]).toEqual([10, 9, 90]);
     expect(game.turn).toBe(0);
@@ -51,24 +57,22 @@ describe('full-cover setup', () => {
     expect(game.lastAction).toBeNull();
     expect(game.pendingFlip).toBeNull();
     expect(game.board.filter(Boolean)).toHaveLength(32);
-    expect(game.board.filter((square) => square?.faceUp)).toHaveLength(0);
 
     for (const [home, cannon, soldier] of [[0, 2, 3], [9, 7, 6]] as const) {
-      for (let column = 0; column < 9; column += 1) {
-        expect(game.board[at(home, column)]).toMatchObject({ faceUp: false });
-      }
+      for (let column = 0; column < 9; column += 1) expect(game.board[at(home, column)]).not.toBeNull();
       for (const column of [1, 7]) expect(game.board[at(cannon, column)]).toMatchObject({ faceUp: false });
-      for (const column of [0, 2, 4, 6, 8]) expect(game.board[at(soldier, column)]).toMatchObject({ faceUp: false });
+      for (const column of [0, 2, 4, 6, 8]) expect(game.board[at(soldier, column)]).not.toBeNull();
     }
     for (const color of ['red', 'black'] as const) {
-      const hidden = game.board.filter((square) => square && !square.faceUp && square.color === color);
-      expect(hidden).toHaveLength(16);
-      const counts: Record<string, number> = {};
-      for (const square of hidden) {
-        if (!square || square.faceUp) throw new Error('Expected a covered piece');
-        counts[square.rank] = (counts[square.rank] ?? 0) + 1;
+      const revealed: Record<string, number> = {};
+      const hidden: Record<string, number> = {};
+      for (const square of game.board) {
+        if (!square || trueColor(square) !== color) continue;
+        if (square.faceUp) revealed[square.piece.rank] = (revealed[square.piece.rank] ?? 0) + 1;
+        else hidden[square.rank] = (hidden[square.rank] ?? 0) + 1;
       }
-      expect(counts).toEqual({ general: 1, advisor: 2, elephant: 2, horse: 2, rook: 2, cannon: 2, soldier: 5 });
+      expect(revealed).toEqual({ general: 1, advisor: 2, elephant: 2 });
+      expect(hidden).toEqual({ horse: 2, rook: 2, cannon: 2, soldier: 5 });
     }
     expect(game.board[at(4, 4)]).toBeNull();
     expect(game.board[at(5, 4)]).toBeNull();
@@ -84,31 +88,27 @@ describe('full-cover setup', () => {
     }
   });
 
-  it('places advisors and elephants only on their legal landing points and never strands any piece', () => {
-    const advisors = {
-      red: [at(7, 3), at(7, 5), at(8, 4), at(9, 3), at(9, 5)],
-      black: [at(0, 3), at(0, 5), at(1, 4), at(2, 3), at(2, 5)],
-    };
+  it('places revealed elephants only on legal landings, keeps the rest covered, and never strands any piece', () => {
     const elephants = {
       red: [at(9, 2), at(9, 6), at(7, 0), at(7, 4), at(7, 8), at(5, 2), at(5, 6)],
       black: [at(0, 2), at(0, 6), at(2, 0), at(2, 4), at(2, 8), at(4, 2), at(4, 6)],
     };
     for (let seed = 1; seed <= 80; seed += 1) {
-      let value = seed;
-      const random = () => ((value = (Math.imul(1664525, value) + 1013904223) | 0) >>> 0) / 2 ** 32;
-      const game = createGame(random);
+      const game = createGame(seeded(seed));
       for (const [color, row] of [['black', 0], ['red', 9]] as const) {
-        expect(game.board[at(row, 3)]).toEqual(covered(color, 'advisor'));
-        expect(game.board[at(row, 4)]).toEqual(covered(color, 'general'));
-        expect(game.board[at(row, 5)]).toEqual(covered(color, 'advisor'));
+        expect(game.board[at(row, 3)]).toEqual(up(color, 'advisor'));
+        expect(game.board[at(row, 4)]).toEqual(up(color, 'general'));
+        expect(game.board[at(row, 5)]).toEqual(up(color, 'advisor'));
       }
       game.board.forEach((square, index) => {
-        if (!square || square.faceUp) return;
-        if (square.rank === 'advisor') expect(advisors[square.color]).toContain(index);
-        if (square.rank === 'elephant') expect(elephants[square.color]).toContain(index);
+        if (!square) return;
+        const color = square.faceUp ? square.piece.color : square.color;
+        const rank = square.faceUp ? square.piece.rank : square.rank;
+        expect(square.faceUp).toBe(FACE_UP_RANKS.includes(rank));
+        if (rank === 'elephant') expect(elephants[color]).toContain(index);
         const empty: Square[] = Array(BOARD_SIZE).fill(null);
-        empty[index] = up(square.color, square.rank);
-        expect(legalMovesFrom(empty, index, square.color).length).toBeGreaterThan(0);
+        empty[index] = up(color, rank);
+        expect(legalMovesFrom(empty, index, color).length).toBeGreaterThan(0);
       });
     }
   });
@@ -117,33 +117,39 @@ describe('full-cover setup', () => {
     for (const random of [() => 0, () => 0.5, () => 0.999999]) {
       const game = createGame(random);
       for (const [color, row] of [['black', 0], ['red', 9]] as const) {
-        expect(game.board[at(row, 4)]).toEqual(covered(color, 'general'));
-        expect(game.board[at(row, 3)]).toEqual(covered(color, 'advisor'));
-        expect(game.board[at(row, 5)]).toEqual(covered(color, 'advisor'));
+        expect(game.board[at(row, 4)]).toEqual(up(color, 'general'));
+        expect(game.board[at(row, 3)]).toEqual(up(color, 'advisor'));
+        expect(game.board[at(row, 5)]).toEqual(up(color, 'advisor'));
       }
     }
     const game = createGame(() => 0.999999);
-    const next = play(game, flip(9, 4));
-    expect(next.board[at(9, 4)]).toEqual(up('red', 'general'));
-    expect(next.turn).toBe(0);
-    expect(next.pendingFlip).toBe(at(9, 4));
+    expect(applyAction(game, flip(9, 4)).ok).toBe(false);
   });
 
-  it('hides the color and rank of every covered piece from both players', () => {
+  it('shows the revealed palace pieces publicly but hides the color and rank of every covered piece', () => {
     const view = toGameView(createGame(() => 0));
     const hidden = view.board.filter((square) => square && !square.faceUp);
-    expect(hidden).toHaveLength(32);
+    expect(hidden).toHaveLength(22);
     expect(hidden.every((square) => square && !square.faceUp &&
       !('color' in square) && !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
-    expect(JSON.stringify(view)).not.toMatch(/general|soldier|rook|elephant|advisor|horse|cannon/);
+    const shown = view.board.filter((square) => square?.faceUp);
+    expect(shown).toHaveLength(10);
+    expect(shown.every((square) => square?.faceUp && FACE_UP_RANKS.includes(square.piece.rank))).toBe(true);
   });
 
-  it('offers all 32 covered pieces as flips, not covered-piece moves', () => {
+  it('offers flips of all 22 covered pieces plus moves of red revealed pieces at the start', () => {
     const game = createGame(() => 0);
-    expect(legalActions(game)).toHaveLength(32);
-    expect(legalActions(game).every((action) => action.type === 'flip')).toBe(true);
-    expect(applyAction(game, move(6, 0, 5, 0)).ok).toBe(false);
-    const black = game.board.findIndex((square) => trueColor(square) === 'black');
+    const actions = legalActions(game);
+    expect(actions.filter((action) => action.type === 'flip')).toHaveLength(22);
+    const moves = actions.filter((action) => action.type === 'move');
+    expect(moves.length).toBeGreaterThan(0);
+    for (const action of moves) {
+      if (action.type !== 'move') continue;
+      const square = game.board[action.from];
+      expect(square?.faceUp && square.piece.color === 'red').toBe(true);
+    }
+    expect(applyAction(game, move(0, 4, 1, 4)).ok).toBe(false);
+    const black = game.board.findIndex((square) => square && !square.faceUp && trueColor(square) === 'black');
     const flipped = play(game, { type: 'flip', at: black });
     expect(flipped.turn).toBe(1);
     expect(flipped.pendingFlip).toBeNull();
@@ -555,7 +561,7 @@ describe('complete games', () => {
       let value = seed;
       const random = () => ((value = (Math.imul(1664525, value) + 1013904223) | 0) >>> 0) / 2 ** 32;
       let game = createGame(random);
-      let hiddenCount = 32;
+      let hiddenCount = 22;
       for (let ply = 0; ply < 100 && !game.outcome; ply += 1) {
         const actions = legalActions(game);
         expect(actions.length).toBeGreaterThan(0);
