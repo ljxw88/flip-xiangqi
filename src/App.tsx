@@ -137,7 +137,6 @@ export default function App() {
   const [mode, setMode] = useState<'local' | 'online'>(initialRoom ? 'online' : 'local');
   const [localGame, setLocalGame] = useState(createGame);
   const [selected, setSelected] = useState<number | null>(null);
-  const [boardMessage, setBoardMessage] = useState('');
   const [joinCode, setJoinCode] = useState(initialRoom ?? '');
   const [copyMessage, setCopyMessage] = useState('');
   const [sheet, setSheet] = useState<'online' | 'rules' | null>(null);
@@ -185,10 +184,10 @@ export default function App() {
   const checked = Boolean(game && currentColor && isInCheck(game.board, currentColor));
   const opponentColor = currentColor === 'red' ? 'black' : 'red';
   const opponentChecked = Boolean(game && currentColor && isInCheck(game.board, opponentColor));
+  const statusColor = game?.outcome ? game.colors[game.outcome.winner] : currentColor;
 
   useEffect(() => {
     setSelected(null);
-    setBoardMessage('');
   }, [mode, game?.turn, game?.pendingFlip, Boolean(game?.outcome), room.status]);
 
   function perform(action: Action) {
@@ -201,7 +200,6 @@ export default function App() {
       });
     }
     setSelected(null);
-    setBoardMessage('');
   }
 
   function handleSquare(index: number) {
@@ -210,15 +208,13 @@ export default function App() {
     if (activeSelection !== null && destinations.includes(index)) {
       perform({ type: 'move', from: activeSelection, to: index });
     } else if (game.pendingFlip !== null) {
-      setBoardMessage('Move it or end your turn.');
+      return;
     } else if (square && !square.faceUp) {
       if (!checked) perform({ type: 'flip', at: index });
     } else if (square && squareColor(square) === currentColor) {
       setSelected((current) => current === index ? null : index);
-      setBoardMessage('');
     } else {
       setSelected(null);
-      setBoardMessage('');
     }
   }
 
@@ -260,50 +256,43 @@ export default function App() {
     }
   }
 
-  function heading(): string {
+  function statusText(): string {
     if (!game) {
-      return room.status === 'connecting' ? 'Connecting to the room…' : 'Your room is not connected';
+      return room.status === 'connecting' || room.status === 'connected' || (room.status === 'idle' && initialRoom)
+        ? 'Connecting…' : 'Room not connected';
     }
-    if (game.outcome) return `Player ${game.outcome.winner + 1} wins!`;
+    if (game.outcome) {
+      const winner = colorName(game.colors[game.outcome.winner]);
+      if (game.outcome.reason === 'checkmate') return `${winner} wins · Checkmate`;
+      if (game.outcome.reason === 'stalemate') return `${winner} wins · No legal moves`;
+      const action = game.lastAction;
+      if (action?.type === 'move' && action.captured?.piece.color === action.piece.color) {
+        return `${winner} wins · ${colorName(action.piece.color)} self-capture`;
+      }
+      return action?.type === 'move' && action.captured?.wasHidden
+        ? `${winner} wins · Covered general` : `${winner} wins · General taken`;
+    }
     if (mode === 'online') {
       if (room.status === 'connecting') return 'Reconnecting…';
       if (room.status !== 'connected') return 'Connection lost';
-      if (!room.connected[0] || !room.connected[1]) return 'Waiting for the other player';
+      if (!room.connected[0] || !room.connected[1]) return 'Waiting for opponent…';
       if (room.pending) return 'Sending…';
-      return room.player === game.turn ? 'Your turn' : 'Their turn';
     }
-    return `${colorName(game.colors[game.turn])} to play`;
-  }
 
-  function guidance(): string {
-    if (!game) return room.status === 'connecting' ? 'Joining room…' : 'Choose a game.';
-    if (game.outcome?.reason === 'general-captured') {
-      const action = game.lastAction;
-      if (action?.type === 'move' && action.captured?.piece.color === action.piece.color) {
-        return 'Own general captured.';
-      }
-      return action?.type === 'move' && action.captured?.wasHidden
-        ? 'Covered general captured!' : 'General captured!';
-    }
-    if (game.outcome?.reason === 'checkmate') return 'Checkmate!';
-    if (game.outcome?.reason === 'stalemate') return 'No legal moves.';
-    if (mode === 'online' && room.status !== 'connected') return 'Reconnect to continue.';
-    if (mode === 'online' && (!room.connected[0] || !room.connected[1])) {
-      return 'Waiting for your opponent.';
-    }
+    const ownTurn = mode === 'local' || room.player === game.turn;
+    const turn = mode === 'local' ? `${colorName(currentColor)} to play` : ownTurn ? 'Your turn' : 'Their turn';
+    const shortTurn = mode === 'local' ? colorName(currentColor) : turn;
     if (game.pendingFlip !== null) {
-      if (mode === 'online' && room.player !== game.turn) return 'They may move or end their turn.';
-      if (boardMessage) return boardMessage;
-      if (checked) return 'Check! Move it or end your turn.';
-      return destinations.length ? 'Move it or end your turn.' : 'No move. End your turn.';
+      if (!ownTurn) return checked ? `${turn} · Check!` : `${turn} · Move or end turn`;
+      if (checked) return `${shortTurn} · Check! ${destinations.length ? 'Move it' : 'No move'}`;
+      return `${shortTurn} · ${destinations.length ? 'Move this piece' : 'No legal move'}`;
     }
-    if (checked) return 'Check! Protect your general.';
-    if (opponentChecked) return `${colorName(opponentColor)} is in check!`;
-    if (mode === 'online' && room.player !== game.turn) return 'Waiting…';
-    if (boardMessage) return boardMessage;
+    if (checked) return `${shortTurn} · Check!`;
+    if (opponentChecked) return `${turn} · ${colorName(opponentColor)} in check`;
+    if (!ownTurn) return turn;
     const square = selected === null ? null : game.board[selected];
-    if (square) return destinations.length ? 'Choose a destination.' : 'No legal moves.';
-    return 'Flip any · move yours';
+    if (square) return `${shortTurn} · ${destinations.length ? 'Choose destination' : 'No legal moves'}`;
+    return turn;
   }
 
   return (
@@ -319,12 +308,12 @@ export default function App() {
       </header>
 
       <section className="play-area" aria-label="Game">
-        <div className={`game-heading${checked && !game?.outcome ? ' game-heading--check' : ''}`} role="status" aria-live="polite">
-          <span className={`color-dot color-dot--${currentColor ?? 'unknown'}`} aria-hidden="true" />
-          <div className="turn-copy">
-            <p className="eyebrow">{game?.outcome ? 'Game over' : currentColor ? `${colorName(currentColor)} · ${mode === 'online' ? 'Online' : 'Hotseat'}` : 'Online'}</p>
-            <h2>{heading()}</h2>
-            <p>{guidance()}</p>
+        <div className={`game-heading${checked && !game?.outcome ? ' game-heading--check' : ''}`}>
+          <div className="turn-copy" role="status" aria-live="polite">
+            <span className={`color-dot color-dot--${statusColor ?? 'unknown'}`}
+              role={statusColor ? 'img' : undefined} aria-label={statusColor ? colorName(statusColor) : undefined}
+              aria-hidden={statusColor ? undefined : true} />
+            <h2>{statusText()}</h2>
           </div>
           {game && game.pendingFlip !== null && canPlay && (
             <button className="button button--finish" type="button" onClick={() => perform({ type: 'end-turn' })}>End turn</button>
@@ -337,22 +326,19 @@ export default function App() {
           ))}
         </div>
 
-        {game ? (
+        {game && (
           <Board game={game} selected={activeSelection} destinations={destinations} canPlay={canPlay} onSquare={handleSquare} />
-        ) : (
-          <div className="board-placeholder">{room.status === 'connecting' ? 'Connecting…' : 'No room connected'}</div>
         )}
 
-        {game?.lastAction?.type === 'move' && game.lastAction.captured && (
-          <p className="capture-note" role="status" aria-live="polite">
-            Captured {game.lastAction.captured.piece.color === game.lastAction.piece.color ? 'own ' : ''}
-            {colorName(game.lastAction.captured.piece.color)} {game.lastAction.captured.piece.rank}{' '}
-            {symbols[game.lastAction.captured.piece.rank][game.lastAction.captured.piece.color]}
-            {game.lastAction.captured.wasHidden ? ' · revealed' : ''}
-          </p>
-        )}
+        <p className="visually-hidden" role="status" aria-live="polite">
+          {game?.lastAction?.type === 'move' && game.lastAction.captured && (
+            <>Captured {game.lastAction.captured.piece.color === game.lastAction.piece.color ? 'own ' : ''}
+              {colorName(game.lastAction.captured.piece.color)} {game.lastAction.captured.piece.rank}
+              {game.lastAction.captured.wasHidden ? ', revealed on capture' : ''}.</>
+          )}
+        </p>
         {game && game.captures.length > 0 && (
-          <div className="captured-list" aria-label="Captured pieces">
+          <div className="captured-list" role="group" aria-label="Captured pieces">
             {game.captures.map(({ piece, wasHidden }, index) => {
               const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
               return (
