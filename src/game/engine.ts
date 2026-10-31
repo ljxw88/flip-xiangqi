@@ -33,9 +33,14 @@ export interface Outcome {
   readonly reason: 'general-captured' | 'checkmate' | 'stalemate';
 }
 
+export interface Capture {
+  readonly piece: Piece;
+  readonly wasHidden: boolean;
+}
+
 export type LastAction =
   | { readonly type: 'flip'; readonly at: number; readonly piece: Piece }
-  | { readonly type: 'move'; readonly from: number; readonly to: number; readonly piece: Piece; readonly captured: Piece | null };
+  | { readonly type: 'move'; readonly from: number; readonly to: number; readonly piece: Piece; readonly captured: Capture | null };
 
 export interface GameView {
   readonly board: readonly PublicSquare[];
@@ -43,7 +48,9 @@ export interface GameView {
   readonly colors: readonly [Color, Color];
   readonly outcome: Outcome | null;
   readonly lastAction: LastAction | null;
-  readonly captures: readonly Piece[];
+  readonly captures: readonly Capture[];
+  /** A flip may be followed by a move of this piece, or an explicit end-turn. */
+  readonly pendingFlip: number | null;
 }
 
 export interface GameState extends GameView {
@@ -52,15 +59,12 @@ export interface GameState extends GameView {
 
 export type Action =
   | { readonly type: 'flip'; readonly at: number }
-  | { readonly type: 'move'; readonly from: number; readonly to: number };
+  | { readonly type: 'move'; readonly from: number; readonly to: number }
+  | { readonly type: 'end-turn' };
 
 export type ActionResult =
   | { readonly ok: true; readonly state: GameState }
   | { readonly ok: false; readonly error: string };
-
-const BACK_RANK: readonly Rank[] = [
-  'rook', 'horse', 'elephant', 'advisor', 'general', 'advisor', 'elephant', 'horse', 'rook',
-];
 
 const DIRECTIONS: readonly [number, number][] = [
   [-1, 0], [1, 0], [0, -1], [0, 1],
@@ -91,33 +95,85 @@ export function squareColor(square: PublicSquare): Color | null {
   return square.faceUp ? square.piece.color : square.color;
 }
 
-/** Shuffle each side's 16 identities, including its general, over its starting points. */
+function shuffle<T>(values: T[], random: () => number): void {
+  for (let i = values.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [values[i], values[j]] = [values[j], values[i]];
+  }
+}
+
+function advisorLanding(row: number, column: number, color: Color): boolean {
+  const palaceStart = color === 'red' ? 7 : 0;
+  const localRow = row - palaceStart;
+  return (localRow === 1 && column === 4) ||
+    ((localRow === 0 || localRow === 2) && (column === 3 || column === 5));
+}
+
+function elephantLanding(row: number, column: number, color: Color): boolean {
+  const homeDistance = color === 'red' ? 9 - row : row;
+  return ((homeDistance === 0 || homeDistance === 4) && (column === 2 || column === 6)) ||
+    (homeDistance === 2 && (column === 0 || column === 4 || column === 8));
+}
+
+/** Placement must respect the piece's legal landing points and have a move on an otherwise empty board. */
+function legalStartingPoint(rank: Rank, color: Color, index: number): boolean {
+  const row = Math.floor(index / BOARD_COLUMNS);
+  const column = index % BOARD_COLUMNS;
+  if (rank === 'advisor' && !advisorLanding(row, column, color)) return false;
+  if (rank === 'elephant' && !elephantLanding(row, column, color)) return false;
+  const board: PublicSquare[] = Array(BOARD_SIZE).fill(null);
+  board[index] = { faceUp: true, piece: { color, rank } };
+  return pseudoMovesFrom(board, index).length > 0;
+}
+
+/** Deal both colors across the 32 standard points, reserving constrained pieces first. */
 export function createGame(random: () => number = Math.random): GameState {
   const board: Square[] = Array(BOARD_SIZE).fill(null);
+  const slots: number[] = [];
+  for (const row of [0, 9]) {
+    for (let column = 0; column < BOARD_COLUMNS; column += 1) slots.push(indexAt(row, column));
+  }
+  for (const row of [2, 7]) {
+    for (const column of [1, 7]) slots.push(indexAt(row, column));
+  }
+  for (const row of [3, 6]) {
+    for (const column of [0, 2, 4, 6, 8]) slots.push(indexAt(row, column));
+  }
+  slots.sort((a, b) => a - b);
 
+  // Generals and advisors stay on their standard home-rank points.
   for (const color of ['red', 'black'] as const) {
     const homeRow = color === 'red' ? 9 : 0;
-    const cannonRow = color === 'red' ? 7 : 2;
-    const soldierRow = color === 'red' ? 6 : 3;
-    const slots: Array<{ index: number; rank: Rank }> = [];
-
-    BACK_RANK.forEach((rank, column) => {
-      slots.push({ index: indexAt(homeRow, column), rank });
-    });
-    for (const column of [1, 7]) slots.push({ index: indexAt(cannonRow, column), rank: 'cannon' });
-    for (const column of [0, 2, 4, 6, 8]) slots.push({ index: indexAt(soldierRow, column), rank: 'soldier' });
-
-    const ranks = slots.map((slot) => slot.rank);
-    for (let i = ranks.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(random() * (i + 1));
-      [ranks[i], ranks[j]] = [ranks[j], ranks[i]];
+    for (const [column, rank] of [[3, 'advisor'], [4, 'general'], [5, 'advisor']] as const) {
+      const index = indexAt(homeRow, column);
+      if (!legalStartingPoint(rank, color, index)) throw new Error('No valid starting arrangement.');
+      board[index] = { faceUp: false, color, rank };
     }
-    slots.forEach(({ index }, i) => {
-      board[index] = { faceUp: false, color, rank: ranks[i] };
-    });
   }
 
-  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [] };
+  // Reserve legal elephant landings, then shuffle all other pieces across the remaining points.
+  for (const color of ['red', 'black'] as const) {
+    const candidates = slots.filter((index) => !board[index] && legalStartingPoint('elephant', color, index));
+    if (candidates.length < 2) throw new Error('No valid starting arrangement.');
+    shuffle(candidates, random);
+    for (const index of candidates.slice(0, 2)) board[index] = { faceUp: false, color, rank: 'elephant' };
+  }
+
+  const remaining: Piece[] = [];
+  for (const color of ['red', 'black'] as const) {
+    for (const [rank, count] of [['rook', 2], ['horse', 2], ['cannon', 2], ['soldier', 5]] as const) {
+      for (let i = 0; i < count; i += 1) remaining.push({ color, rank });
+    }
+  }
+  shuffle(remaining, random);
+  const free = slots.filter((index) => !board[index]);
+  free.forEach((index, i) => {
+    const piece = remaining[i];
+    if (!legalStartingPoint(piece.rank, piece.color, index)) throw new Error('No valid starting arrangement.');
+    board[index] = { faceUp: false, ...piece };
+  });
+
+  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [], pendingFlip: null };
 }
 
 /** Pseudo-legal moves include attacks on a general and do not check the mover's own general. */
@@ -133,7 +189,7 @@ function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[]
     if (!inBounds(rowTo, columnTo)) return;
     const to = indexAt(rowTo, columnTo);
     const target = board[to];
-    if (!target || (target.faceUp && target.piece.color !== color)) destinations.push(to);
+    if (!target || !target.faceUp || target.piece.color !== color) destinations.push(to);
   }
 
   if (rank === 'general') {
@@ -189,12 +245,12 @@ function pseudoMovesFrom(board: readonly PublicSquare[], from: number): number[]
         if (!target) {
           if (!screenFound) destinations.push(to);
         } else if (rank === 'rook') {
-          if (target.faceUp && target.piece.color !== color) destinations.push(to);
+          if (!target.faceUp || target.piece.color !== color) destinations.push(to);
           break;
         } else if (!screenFound) {
           screenFound = true;
         } else {
-          if (target.faceUp && target.piece.color !== color) destinations.push(to);
+          if (!target.faceUp || target.piece.color !== color) destinations.push(to);
           break;
         }
       }
@@ -237,6 +293,15 @@ export function legalMovesFrom(board: readonly PublicSquare[], from: number, col
 export function legalActions(game: GameView): Action[] {
   if (game.outcome) return [];
   const color = game.colors[game.turn];
+  const pendingFlip = game.pendingFlip;
+  if (pendingFlip !== null) {
+    return [
+      { type: 'end-turn' },
+      ...legalMovesFrom(game.board, pendingFlip, color).map((to): Action => ({
+        type: 'move', from: pendingFlip, to,
+      })),
+    ];
+  }
   const checked = isInCheck(game.board, color);
   const actions: Action[] = [];
   game.board.forEach((square, from) => {
@@ -250,37 +315,49 @@ export function legalActions(game: GameView): Action[] {
   return actions;
 }
 
-/** Validate and apply exactly one flip or move without mutating the previous state. */
+/** Validate a move or the optional flip → move/end-turn chain without mutating the previous state. */
 export function applyAction(game: GameState, action: Action): ActionResult {
   if (game.outcome) return { ok: false, error: 'The game is already over.' };
   const board = game.board.slice();
   const color = game.colors[game.turn];
   let lastAction: LastAction;
-  let captured: Piece | null = null;
+  let captured: Capture | null = null;
 
   if (action.type === 'flip') {
     const square = board[action.at];
-    if (!Number.isInteger(action.at) || action.at < 0 || action.at >= BOARD_SIZE ||
+    if (game.pendingFlip !== null || !Number.isInteger(action.at) || action.at < 0 || action.at >= BOARD_SIZE ||
       !square || square.faceUp || square.color !== color || isInCheck(board, color)) {
       return { ok: false, error: 'That is not a legal action.' };
     }
     const piece: Piece = { color: square.color, rank: square.rank };
     board[action.at] = { faceUp: true, piece };
-    lastAction = { type: 'flip', at: action.at, piece };
+    return {
+      ok: true,
+      state: { ...game, board, pendingFlip: action.at, lastAction: { type: 'flip', at: action.at, piece } },
+    };
   } else if (action.type === 'move') {
-    if (!legalMovesFrom(board, action.from, color).includes(action.to)) {
+    if ((game.pendingFlip !== null && action.from !== game.pendingFlip) ||
+      !legalMovesFrom(board, action.from, color).includes(action.to)) {
       return { ok: false, error: 'That is not a legal action.' };
     }
     const source = board[action.from];
     const target = board[action.to];
-    if (!source?.faceUp || (target && !target.faceUp)) {
+    if (!source?.faceUp) {
       return { ok: false, error: 'That is not a legal action.' };
     }
     const piece = { ...source.piece };
-    captured = target ? { ...target.piece } : null;
+    captured = target ? {
+      piece: target.faceUp ? { ...target.piece } : { color: target.color, rank: target.rank },
+      wasHidden: !target.faceUp,
+    } : null;
     board[action.to] = { faceUp: true, piece };
     board[action.from] = null;
     lastAction = { type: 'move', from: action.from, to: action.to, piece, captured };
+  } else if (action.type === 'end-turn') {
+    if (game.pendingFlip === null || game.lastAction?.type !== 'flip' || game.lastAction.at !== game.pendingFlip) {
+      return { ok: false, error: 'That is not a legal action.' };
+    }
+    lastAction = game.lastAction;
   } else {
     return { ok: false, error: 'That is not a legal action.' };
   }
@@ -292,9 +369,11 @@ export function applyAction(game: GameState, action: Action): ActionResult {
     outcome: null,
     lastAction,
     captures: captured ? [...game.captures, captured] : game.captures,
+    pendingFlip: null,
   };
-  if (captured?.rank === 'general') {
-    return { ok: true, state: { ...next, outcome: { winner: game.turn, reason: 'general-captured' } } };
+  if (captured?.piece.rank === 'general') {
+    const winner = captured.piece.color === color ? otherPlayer(game.turn) : game.turn;
+    return { ok: true, state: { ...next, outcome: { winner, reason: 'general-captured' } } };
   }
   if (legalActions(next).length === 0) {
     return {
@@ -322,14 +401,18 @@ export function toGameView(game: GameState): GameView {
     turn: game.turn,
     colors: [...game.colors],
     outcome: game.outcome ? { ...game.outcome } : null,
+    pendingFlip: game.pendingFlip,
     lastAction: game.lastAction?.type === 'flip' ? {
       ...game.lastAction,
       piece: { ...game.lastAction.piece },
     } : game.lastAction ? {
       ...game.lastAction,
       piece: { ...game.lastAction.piece },
-      captured: game.lastAction.captured ? { ...game.lastAction.captured } : null,
+      captured: game.lastAction.captured ? {
+        ...game.lastAction.captured,
+        piece: { ...game.lastAction.captured.piece },
+      } : null,
     } : null,
-    captures: game.captures.map((piece) => ({ ...piece })),
+    captures: game.captures.map((capture) => ({ ...capture, piece: { ...capture.piece } })),
   };
 }

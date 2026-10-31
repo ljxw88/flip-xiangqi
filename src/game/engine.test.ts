@@ -27,7 +27,7 @@ function position(entries: Array<[number, number, Square]>, turn: Player = 0): G
   board[at(9, 4)] = up('red', 'general');
   board[at(0, 3)] = up('black', 'general');
   for (const [row, column, square] of entries) board[at(row, column)] = square;
-  return { board, turn, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [] };
+  return { board, turn, colors: ['red', 'black'], outcome: null, lastAction: null, captures: [], pendingFlip: null };
 }
 
 function play(game: GameState, action: Action): GameState {
@@ -39,6 +39,7 @@ function play(game: GameState, action: Action): GameState {
 const move = (fromRow: number, fromColumn: number, toRow: number, toColumn: number): Action =>
   ({ type: 'move', from: at(fromRow, fromColumn), to: at(toRow, toColumn) });
 const flip = (row: number, column: number): Action => ({ type: 'flip', at: at(row, column) });
+const endTurn: Action = { type: 'end-turn' };
 
 describe('full-cover setup', () => {
   it('places all 32 pieces face-down on standard starting points, including the generals', () => {
@@ -47,17 +48,18 @@ describe('full-cover setup', () => {
     expect(game.turn).toBe(0);
     expect(game.colors).toEqual(['red', 'black']);
     expect(game.lastAction).toBeNull();
+    expect(game.pendingFlip).toBeNull();
     expect(game.board.filter(Boolean)).toHaveLength(32);
     expect(game.board.filter((square) => square?.faceUp)).toHaveLength(0);
 
-    for (const [color, home, cannon, soldier] of [
-      ['black', 0, 2, 3], ['red', 9, 7, 6],
-    ] as const) {
+    for (const [home, cannon, soldier] of [[0, 2, 3], [9, 7, 6]] as const) {
       for (let column = 0; column < 9; column += 1) {
-        expect(game.board[at(home, column)]).toMatchObject({ faceUp: false, color });
+        expect(game.board[at(home, column)]).toMatchObject({ faceUp: false });
       }
-      for (const column of [1, 7]) expect(game.board[at(cannon, column)]).toMatchObject({ faceUp: false, color });
-      for (const column of [0, 2, 4, 6, 8]) expect(game.board[at(soldier, column)]).toMatchObject({ faceUp: false, color });
+      for (const column of [1, 7]) expect(game.board[at(cannon, column)]).toMatchObject({ faceUp: false });
+      for (const column of [0, 2, 4, 6, 8]) expect(game.board[at(soldier, column)]).toMatchObject({ faceUp: false });
+    }
+    for (const color of ['red', 'black'] as const) {
       const hidden = game.board.filter((square) => square && !square.faceUp && square.color === color);
       expect(hidden).toHaveLength(16);
       const counts: Record<string, number> = {};
@@ -71,23 +73,59 @@ describe('full-cover setup', () => {
     expect(game.board[at(5, 4)]).toBeNull();
   });
 
-  it('shuffles both generals among all 16 starting points, independently by color', () => {
-    let calls = 0;
-    const game = createGame(() => calls++ < 15 ? 0 : 0.999999);
-    expect(game.board[at(9, 3)]).toEqual(covered('red', 'general'));
-    expect(game.board[at(9, 4)]).not.toEqual(covered('red', 'general'));
-    expect(game.board[at(0, 4)]).toEqual(covered('black', 'general'));
-    expect(calls).toBe(30);
+  it('mixes both colors across both halves without changing the 32 points', () => {
+    const game = createGame(() => 0.999999);
+    const top = game.board.slice(0, 5 * BOARD_COLUMNS);
+    const bottom = game.board.slice(5 * BOARD_COLUMNS);
+    for (const half of [top, bottom]) {
+      expect(half.some((square) => squareColor(square) === 'red')).toBe(true);
+      expect(half.some((square) => squareColor(square) === 'black')).toBe(true);
+    }
   });
 
-  it('can shuffle a general onto a soldier starting point and flip it there', () => {
-    let calls = 0;
-    const game = createGame(() => calls++ === 0 ? 0.25 : 0.999999);
-    expect(game.board[at(6, 8)]).toEqual(covered('red', 'general'));
-    expect(toGameView(game).board[at(6, 8)]).toEqual({ faceUp: false, color: 'red' });
-    const next = play(game, flip(6, 8));
-    expect(next.board[at(6, 8)]).toEqual(up('red', 'general'));
-    expect(next.turn).toBe(1);
+  it('places advisors and elephants only on their legal landing points and never strands any piece', () => {
+    const advisors = {
+      red: [at(7, 3), at(7, 5), at(8, 4), at(9, 3), at(9, 5)],
+      black: [at(0, 3), at(0, 5), at(1, 4), at(2, 3), at(2, 5)],
+    };
+    const elephants = {
+      red: [at(9, 2), at(9, 6), at(7, 0), at(7, 4), at(7, 8), at(5, 2), at(5, 6)],
+      black: [at(0, 2), at(0, 6), at(2, 0), at(2, 4), at(2, 8), at(4, 2), at(4, 6)],
+    };
+    for (let seed = 1; seed <= 80; seed += 1) {
+      let value = seed;
+      const random = () => ((value = (Math.imul(1664525, value) + 1013904223) | 0) >>> 0) / 2 ** 32;
+      const game = createGame(random);
+      for (const [color, row] of [['black', 0], ['red', 9]] as const) {
+        expect(game.board[at(row, 3)]).toEqual(covered(color, 'advisor'));
+        expect(game.board[at(row, 4)]).toEqual(covered(color, 'general'));
+        expect(game.board[at(row, 5)]).toEqual(covered(color, 'advisor'));
+      }
+      game.board.forEach((square, index) => {
+        if (!square || square.faceUp) return;
+        if (square.rank === 'advisor') expect(advisors[square.color]).toContain(index);
+        if (square.rank === 'elephant') expect(elephants[square.color]).toContain(index);
+        const empty: Square[] = Array(BOARD_SIZE).fill(null);
+        empty[index] = up(square.color, square.rank);
+        expect(legalMovesFrom(empty, index, square.color).length).toBeGreaterThan(0);
+      });
+    }
+  });
+
+  it('always keeps generals centered and advisors beside them on their home rank', () => {
+    for (const random of [() => 0, () => 0.5, () => 0.999999]) {
+      const game = createGame(random);
+      for (const [color, row] of [['black', 0], ['red', 9]] as const) {
+        expect(game.board[at(row, 4)]).toEqual(covered(color, 'general'));
+        expect(game.board[at(row, 3)]).toEqual(covered(color, 'advisor'));
+        expect(game.board[at(row, 5)]).toEqual(covered(color, 'advisor'));
+      }
+    }
+    const game = createGame(() => 0.999999);
+    const next = play(game, flip(9, 4));
+    expect(next.board[at(9, 4)]).toEqual(up('red', 'general'));
+    expect(next.turn).toBe(0);
+    expect(next.pendingFlip).toBe(at(9, 4));
   });
 
   it('exposes only the color of every covered piece to both players', () => {
@@ -96,8 +134,6 @@ describe('full-cover setup', () => {
     expect(hidden).toHaveLength(32);
     expect(hidden.every((square) => square && !square.faceUp &&
       !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
-    expect(view.board[at(9, 4)]).toEqual({ faceUp: false, color: 'red' });
-    expect(view.board[at(0, 4)]).toEqual({ faceUp: false, color: 'black' });
     expect(JSON.stringify(view)).not.toMatch(/general|soldier|rook|elephant|advisor|horse|cannon/);
   });
 
@@ -106,7 +142,9 @@ describe('full-cover setup', () => {
     expect(legalActions(game)).toHaveLength(16);
     expect(legalActions(game).every((action) => action.type === 'flip' && squareColor(game.board[action.at]) === 'red')).toBe(true);
     expect(applyAction(game, move(6, 0, 5, 0)).ok).toBe(false);
-    expect(applyAction(game, flip(3, 0)).ok).toBe(false);
+    const black = game.board.findIndex((square) => squareColor(square) === 'black');
+    expect(applyAction(game, { type: 'flip', at: black }).ok).toBe(false);
+    expect(applyAction(game, endTurn).ok).toBe(false);
     expect(applyAction(game, flip(4, 4)).ok).toBe(false);
     expect(applyAction(game, { type: 'flip', at: -1 }).ok).toBe(false);
     expect(applyAction(game, { type: 'flip', at: 90 }).ok).toBe(false);
@@ -114,21 +152,54 @@ describe('full-cover setup', () => {
 });
 
 describe('flipping and secrecy', () => {
-  it('flips in place, ends the turn, and only later moves as the revealed identity', () => {
+  it('flips in place and may move that piece immediately in the same turn', () => {
     const game = position([[6, 0, covered('red', 'rook')], [3, 0, covered('black', 'elephant')]]);
     expect(legalMovesFrom(game.board, at(6, 0), 'red')).toEqual([]);
     expect(applyAction(game, move(6, 0, 6, 2)).ok).toBe(false);
     const first = play(game, flip(6, 0));
     expect(first.board[at(6, 0)]).toEqual(up('red', 'rook'));
-    expect(first.turn).toBe(1);
+    expect(first.turn).toBe(0);
+    expect(first.pendingFlip).toBe(at(6, 0));
     expect(first.lastAction).toEqual({ type: 'flip', at: at(6, 0), piece: { color: 'red', rank: 'rook' } });
-    expect(applyAction(first, move(6, 0, 6, 2)).ok).toBe(false);
+    expect(applyAction(first, flip(3, 0)).ok).toBe(false);
+    expect(applyAction(first, move(9, 4, 8, 4)).ok).toBe(false);
     expect(game.board[at(6, 0)]).toEqual(covered('red', 'rook'));
+    const moved = play(first, move(6, 0, 6, 2));
+    expect(moved.board[at(6, 0)]).toBeNull();
+    expect(moved.board[at(6, 2)]).toEqual(up('red', 'rook'));
+    expect(moved.turn).toBe(1);
+    expect(moved.pendingFlip).toBeNull();
+  });
 
-    const second = play(first, flip(3, 0));
-    const third = play(second, move(6, 0, 6, 2));
-    expect(third.board[at(6, 0)]).toBeNull();
-    expect(third.board[at(6, 2)]).toEqual(up('red', 'rook'));
+  it('may end the turn without moving the newly flipped piece', () => {
+    const game = position([[6, 0, covered('red', 'rook')], [3, 0, covered('black', 'elephant')]]);
+    const first = play(game, flip(6, 0));
+    expect(legalActions(first)).toContainEqual(endTurn);
+    const passed = play(first, endTurn);
+    expect(passed.turn).toBe(1);
+    expect(passed.pendingFlip).toBeNull();
+    expect(passed.board[at(6, 0)]).toEqual(up('red', 'rook'));
+    expect(applyAction(passed, endTurn).ok).toBe(false);
+  });
+
+  it('can end the turn when the newly flipped piece has no legal move', () => {
+    const game = position([
+      [9, 4, covered('red', 'general')], [8, 4, up('red', 'soldier')],
+      [9, 3, up('red', 'advisor')], [9, 5, up('red', 'advisor')],
+    ]);
+    const flipped = play(game, flip(9, 4));
+    expect(legalActions(flipped)).toEqual([endTurn]);
+    expect(play(flipped, endTurn).turn).toBe(1);
+  });
+
+  it.each<Color>(['red', 'black'])('may capture a covered %s piece immediately after flipping', (color) => {
+    const game = position([[6, 0, covered('red', 'rook')], [6, 2, covered(color, 'horse')], [6, 4, up('red', 'soldier')]]);
+    const flipped = play(game, flip(6, 0));
+    expect(applyAction(flipped, flip(6, 2)).ok).toBe(false);
+    expect(applyAction(flipped, move(6, 4, 5, 4)).ok).toBe(false);
+    const next = play(flipped, move(6, 0, 6, 2));
+    expect(next.turn).toBe(1);
+    expect(next.captures).toEqual([{ piece: { color, rank: 'horse' }, wasHidden: true }]);
   });
 
   it('cannot flip an opponent, an empty point, or an already revealed piece', () => {
@@ -148,12 +219,13 @@ describe('flipping and secrecy', () => {
     expect(toGameView(first).board[at(6, 0)]).toEqual({ faceUp: false, color: 'red' });
   });
 
-  it('allows an off-palace general to be flipped but keeps its movement palace-limited', () => {
-    const game = position([[9, 4, null], [6, 0, covered('red', 'general')]]);
-    const next = play(game, flip(6, 0));
-    expect(next.board[at(6, 0)]).toEqual(up('red', 'general'));
-    expect(legalMovesFrom(next.board, at(6, 0), 'red')).toEqual([]);
-    expect(next.outcome).toBeNull();
+  it('allows a flipped general to move immediately within its palace', () => {
+    const game = position([[9, 4, covered('red', 'general')]]);
+    const next = play(game, flip(9, 4));
+    expect(next.board[at(9, 4)]).toEqual(up('red', 'general'));
+    const moved = play(next, move(9, 4, 8, 4));
+    expect(moved.board[at(8, 4)]).toEqual(up('red', 'general'));
+    expect(moved.turn).toBe(1);
   });
 
   it('allows a general to be flipped into check without leaking its hidden identity', () => {
@@ -161,11 +233,15 @@ describe('flipping and secrecy', () => {
       [9, 4, null], [7, 4, covered('red', 'general')], [7, 0, up('black', 'rook')],
     ]);
     expect(isInCheck(game.board, 'red')).toBe(false);
-    expect(legalMovesFrom(game.board, at(7, 0), 'black')).not.toContain(at(7, 4));
+    expect(legalMovesFrom(game.board, at(7, 0), 'black')).toContain(at(7, 4));
     const revealed = play(game, flip(7, 4));
-    expect(revealed.turn).toBe(1);
+    expect(revealed.turn).toBe(0);
     expect(isInCheck(revealed.board, 'red')).toBe(true);
-    const captured = play(revealed, move(7, 0, 7, 4));
+    const saved = play(revealed, move(7, 4, 8, 4));
+    expect(saved.turn).toBe(1);
+    expect(isInCheck(saved.board, 'red')).toBe(false);
+    const passed = play(revealed, endTurn);
+    const captured = play(passed, move(7, 0, 7, 4));
     expect(captured.outcome).toEqual({ winner: 1, reason: 'general-captured' });
   });
 
@@ -178,9 +254,21 @@ describe('flipping and secrecy', () => {
     expect(legalMovesFrom(game.board, at(8, 0), 'red')).toContain(at(8, 4));
     expect(isInCheck(play(game, move(8, 0, 8, 4)).board, 'red')).toBe(false);
   });
+
+  it('waits until the flip chain ends before declaring checkmate', () => {
+    const game = position([
+      [0, 3, null], [0, 4, up('black', 'general')], [1, 3, up('red', 'rook')],
+      [1, 5, up('red', 'rook')], [3, 4, covered('red', 'rook')], [6, 4, up('red', 'soldier')],
+    ]);
+    const flipped = play(game, flip(3, 4));
+    expect(isInCheck(flipped.board, 'black')).toBe(true);
+    expect(flipped.outcome).toBeNull();
+    expect(flipped.turn).toBe(0);
+    expect(play(flipped, endTurn).outcome).toEqual({ winner: 0, reason: 'checkmate' });
+  });
 });
 
-describe('revealed xiangqi movement and covered immunity', () => {
+describe('revealed xiangqi movement and covered captures', () => {
   it('restricts a general to orthogonal steps inside its palace', () => {
     const game = position([
       [9, 4, null], [7, 3, up('red', 'general')], [0, 3, null], [0, 5, up('black', 'general')],
@@ -215,19 +303,28 @@ describe('revealed xiangqi movement and covered immunity', () => {
     expect(moves).not.toContain(at(3, 5));
   });
 
-  it('stops a rook at a covered enemy, then allows capture after it is flipped', () => {
+  it('lets a rook capture a covered enemy and reveals its identity', () => {
     const game = position([[5, 4, up('red', 'rook')], [5, 6, covered('black', 'horse')], [5, 7, up('black', 'soldier')]]);
     const moves = legalMovesFrom(game.board, at(5, 4), 'red');
     expect(moves).toContain(at(5, 5));
-    expect(moves).not.toContain(at(5, 6));
+    expect(moves).toContain(at(5, 6));
     expect(moves).not.toContain(at(5, 7));
-    expect(applyAction(game, move(5, 4, 5, 6)).ok).toBe(false);
-
-    const revealed = position([[5, 4, up('red', 'rook')], [5, 6, up('black', 'horse')], [5, 7, up('black', 'soldier')]]);
-    expect(legalMovesFrom(revealed.board, at(5, 4), 'red')).toContain(at(5, 6));
-    const next = play(revealed, move(5, 4, 5, 6));
-    expect(next.captures).toEqual([{ color: 'black', rank: 'horse' }]);
+    const next = play(game, move(5, 4, 5, 6));
+    expect(next.board[at(5, 6)]).toEqual(up('red', 'rook'));
+    expect(next.captures).toEqual([{ piece: { color: 'black', rank: 'horse' }, wasHidden: true }]);
+    expect(toGameView(next).captures).toEqual(next.captures);
+    expect(toGameView(game).board[at(5, 6)]).toEqual({ faceUp: false, color: 'black' });
     expect(next.outcome).toBeNull();
+  });
+
+  it('allows self-capture of a covered piece, but not a revealed friendly piece', () => {
+    const game = position([[5, 4, up('red', 'rook')], [5, 6, covered('red', 'horse')]]);
+    const next = play(game, move(5, 4, 5, 6));
+    expect(next.captures).toEqual([{ piece: { color: 'red', rank: 'horse' }, wasHidden: true }]);
+    expect(next.board[at(5, 6)]).toEqual(up('red', 'rook'));
+    const friendly = position([[5, 4, up('red', 'rook')], [5, 6, up('red', 'horse')]]);
+    expect(legalMovesFrom(friendly.board, at(5, 4), 'red')).not.toContain(at(5, 6));
+    expect(applyAction(friendly, move(5, 4, 5, 6)).ok).toBe(false);
   });
 
   it.each<[Rank, number, number, number, number]>([
@@ -236,14 +333,16 @@ describe('revealed xiangqi movement and covered immunity', () => {
     ['elephant', 9, 2, 7, 0],
     ['advisor', 9, 3, 8, 4],
     ['general', 9, 4, 8, 4],
-  ])('prevents a revealed %s landing on a covered enemy', (rank, fromRow, fromColumn, toRow, toColumn) => {
-    const hidden = position([[fromRow, fromColumn, up('red', rank)], [toRow, toColumn, covered('black', 'horse')]]);
-    const visible = position([[fromRow, fromColumn, up('red', rank)], [toRow, toColumn, up('black', 'horse')]]);
-    expect(legalMovesFrom(hidden.board, at(fromRow, fromColumn), 'red')).not.toContain(at(toRow, toColumn));
-    expect(legalMovesFrom(visible.board, at(fromRow, fromColumn), 'red')).toContain(at(toRow, toColumn));
+  ])('lets a revealed %s capture a covered piece of either color', (rank, fromRow, fromColumn, toRow, toColumn) => {
+    for (const color of ['red', 'black'] as const) {
+      const game = position([[fromRow, fromColumn, up('red', rank)], [toRow, toColumn, covered(color, 'horse')]]);
+      expect(legalMovesFrom(game.board, at(fromRow, fromColumn), 'red')).toContain(at(toRow, toColumn));
+      const next = play(game, move(fromRow, fromColumn, toRow, toColumn));
+      expect(next.captures).toEqual([{ piece: { color, rank: 'horse' }, wasHidden: true }]);
+    }
   });
 
-  it('allows a covered cannon screen but not a covered cannon target', () => {
+  it('lets a cannon capture either color of covered target over exactly one screen', () => {
     const game = position([
       [5, 1, up('red', 'cannon')], [5, 0, up('black', 'soldier')],
       [5, 3, covered('red', 'horse')], [5, 6, covered('black', 'rook')], [5, 7, up('black', 'horse')],
@@ -252,10 +351,13 @@ describe('revealed xiangqi movement and covered immunity', () => {
     expect(moves).toEqual(expect.arrayContaining([at(5, 2), at(3, 1)]));
     expect(moves).not.toContain(at(5, 0));
     expect(moves).not.toContain(at(5, 4));
-    expect(moves).not.toContain(at(5, 6));
+    expect(moves).toContain(at(5, 6));
     expect(moves).not.toContain(at(5, 7));
-    const revealed = position([[5, 1, up('red', 'cannon')], [5, 3, covered('red', 'horse')], [5, 6, up('black', 'rook')]]);
-    expect(legalMovesFrom(revealed.board, at(5, 1), 'red')).toContain(at(5, 6));
+    expect(play(game, move(5, 1, 5, 6)).captures).toEqual([{ piece: { color: 'black', rank: 'rook' }, wasHidden: true }]);
+    const friendly = position([[5, 1, up('red', 'cannon')], [5, 3, covered('black', 'horse')], [5, 6, covered('red', 'rook')]]);
+    expect(play(friendly, move(5, 1, 5, 6)).captures).toEqual([{ piece: { color: 'red', rank: 'rook' }, wasHidden: true }]);
+    const revealedFriendly = position([[5, 1, up('red', 'cannon')], [5, 3, covered('black', 'horse')], [5, 6, up('red', 'rook')]]);
+    expect(legalMovesFrom(revealedFriendly.board, at(5, 1), 'red')).not.toContain(at(5, 6));
   });
 
   it('moves soldiers forward and sideways only after crossing the river', () => {
@@ -273,7 +375,7 @@ describe('revealed xiangqi movement and covered immunity', () => {
     const game = position([[4, 4, up('red', 'soldier')], [3, 4, up('black', 'rook')]]);
     const next = play(game, move(4, 4, 3, 4));
     expect(next.board[at(3, 4)]).toEqual(up('red', 'soldier'));
-    expect(next.captures).toEqual([{ color: 'black', rank: 'rook' }]);
+    expect(next.captures).toEqual([{ piece: { color: 'black', rank: 'rook' }, wasHidden: false }]);
   });
 });
 
@@ -303,13 +405,45 @@ describe('check and game end', () => {
     const game = position([[0, 3, null], [5, 3, up('black', 'general')], [5, 0, up('red', 'rook')]]);
     const won = play(game, move(5, 0, 5, 3));
     expect(won.outcome).toEqual({ winner: 0, reason: 'general-captured' });
-    expect(won.captures).toEqual([{ color: 'black', rank: 'general' }]);
+    expect(won.captures).toEqual([{ piece: { color: 'black', rank: 'general' }, wasHidden: false }]);
     expect(applyAction(won, move(5, 3, 5, 4)).ok).toBe(false);
     expect(legalActions(won)).toEqual([]);
 
     const flying = position([[0, 3, null], [0, 4, up('black', 'general')]]);
     expect(legalMovesFrom(flying.board, at(9, 4), 'red')).toContain(at(0, 4));
     expect(play(flying, move(9, 4, 0, 4)).outcome).toEqual({ winner: 0, reason: 'general-captured' });
+  });
+
+  it('wins when a covered enemy general is captured and revealed', () => {
+    const game = position([[0, 3, null], [5, 3, covered('black', 'general')], [5, 0, up('red', 'rook')]]);
+    expect(isInCheck(game.board, 'black')).toBe(false);
+    const won = play(game, move(5, 0, 5, 3));
+    expect(won.outcome).toEqual({ winner: 0, reason: 'general-captured' });
+    expect(toGameView(won).captures).toEqual([{ piece: { color: 'black', rank: 'general' }, wasHidden: true }]);
+  });
+
+  it('loses on self-capture of a covered general without revealing it through legal hints', () => {
+    const generalAtTarget = position([
+      [9, 4, null], [5, 0, up('red', 'rook')], [5, 3, covered('red', 'general')], [6, 0, covered('red', 'horse')],
+    ]);
+    const generalElsewhere = position([
+      [9, 4, null], [5, 0, up('red', 'rook')], [5, 3, covered('red', 'horse')], [6, 0, covered('red', 'general')],
+    ]);
+    expect(toGameView(generalAtTarget)).toEqual(toGameView(generalElsewhere));
+    expect(legalMovesFrom(generalAtTarget.board, at(5, 0), 'red'))
+      .toEqual(legalMovesFrom(generalElsewhere.board, at(5, 0), 'red'));
+    const lost = play(generalAtTarget, move(5, 0, 5, 3));
+    expect(lost.outcome).toEqual({ winner: 1, reason: 'general-captured' });
+    expect(lost.captures).toEqual([{ piece: { color: 'red', rank: 'general' }, wasHidden: true }]);
+  });
+
+  it('also awards red the win if black captures its own covered general', () => {
+    const game = position([
+      [0, 3, null], [4, 0, up('black', 'rook')], [4, 2, covered('black', 'general')],
+    ], 1);
+    const lost = play(game, move(4, 0, 4, 2));
+    expect(lost.outcome).toEqual({ winner: 0, reason: 'general-captured' });
+    expect(lost.captures).toEqual([{ piece: { color: 'black', rank: 'general' }, wasHidden: true }]);
   });
 
   it('wins by checkmating a revealed general even if the defender has covered pieces', () => {
@@ -379,28 +513,33 @@ describe('complete games', () => {
         const color = game.colors[game.turn];
         const previousTurn = game.turn;
         const previousCount = game.board.filter(Boolean).length;
-        if (action.type === 'move') {
-          const target = game.board[action.to];
-          expect(!target || target.faceUp).toBe(true);
-        }
+        const target = action.type === 'move' ? game.board[action.to] : null;
+        if (target?.faceUp) expect(target.piece.color).not.toBe(color);
+        const capturedHidden = Boolean(target && !target.faceUp);
         game = play(game, action);
-        expect(game.turn).not.toBe(previousTurn);
         if (action.type === 'flip') {
+          expect(game.turn).toBe(previousTurn);
+          expect(game.pendingFlip).toBe(action.at);
           expect(game.board[action.at]?.faceUp).toBe(true);
           expect(squareColor(game.board[action.at])).toBe(color);
-        } else {
+        } else if (action.type === 'move') {
+          expect(game.turn).not.toBe(previousTurn);
+          expect(game.pendingFlip).toBeNull();
           expect(game.board[action.to]?.faceUp).toBe(true);
           expect(squareColor(game.board[action.to])).toBe(color);
           expect(isInCheck(game.board, color)).toBe(false);
+        } else {
+          expect(game.turn).not.toBe(previousTurn);
+          expect(game.pendingFlip).toBeNull();
         }
         expect(game.board.filter(Boolean).length + game.captures.length).toBe(32);
         const remainingHidden = game.board.filter((square) => square && !square.faceUp).length;
-        expect(remainingHidden).toBe(hiddenCount - (action.type === 'flip' ? 1 : 0));
+        expect(remainingHidden).toBe(hiddenCount - (action.type === 'flip' || capturedHidden ? 1 : 0));
         if (action.type === 'flip') expect(game.board.filter(Boolean)).toHaveLength(previousCount);
         hiddenCount = remainingHidden;
         const generalsOnBoard = game.board.filter((square) => square &&
           (square.faceUp ? square.piece.rank : square.rank) === 'general').length;
-        expect(generalsOnBoard + game.captures.filter((piece) => piece.rank === 'general').length).toBe(2);
+        expect(generalsOnBoard + game.captures.filter((capture) => capture.piece.rank === 'general').length).toBe(2);
         for (const square of toGameView(game).board) {
           if (square && !square.faceUp) {
             expect(square).not.toHaveProperty('rank');

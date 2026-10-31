@@ -1,6 +1,6 @@
 # 翻转象棋 · Flip
 
-A full-board **全盖翻转** game for two people: play hotseat in one browser, or share a WebSocket room. Every piece starts covered, including both generals. The pure TypeScript engine enforces the rules; the online server never sends a covered identity to either player until its owner flips it.
+A full-board **全盖翻转** game for two people: play hotseat in one browser, or share a WebSocket room. Every piece starts covered, including both generals. The pure TypeScript engine enforces the rules; the online server reveals a covered identity only when it is flipped or captured.
 
 ## Requirements and local play
 
@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: red plays first. On your turn, click one of your covered pieces to flip it **in place**, or select one of your revealed pieces and then a highlighted destination. A flip ends the turn; it does not also move. **New hotseat game** resets the board.
+Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: red plays first. On your turn, flip one of your covered pieces, then either move that same piece immediately or choose **End turn**. Alternatively, move an already revealed piece. Covered backs look identical and the colors are mixed across the board; an opponent's covered piece cannot be flipped by you. **New hotseat game** resets the board. On narrow phones, swipe the enlarged board sideways for larger tap targets, or choose **Fit board** to see it all at once.
 
 ```sh
 npm test       # rules and WebSocket room tests
@@ -38,7 +38,7 @@ Vite proxies `/ws` to the room server at `127.0.0.1:3001`, so the other browser 
 
 The game pauses if either player disconnects. Reload the same tab or use **Reconnect** to reclaim its seat using a session token stored in that tab's session storage. Seats remain reserved for their original players; create a new room for different players. Rooms are kept in memory and expire 30 minutes after both players disconnect; restarting the server deletes them immediately. After a game ends, either connected player may start a rematch.
 
-This version replaces both the old 4×8 Banqi and the earlier full-board 揭棋 protocols. After upgrading, restart the room server and reload both browsers; old in-memory rooms cannot be continued.
+This version changes the room protocol and replaces earlier turn and placement rules. After upgrading, restart the room server and reload both browsers; old in-memory rooms cannot be continued.
 
 ### Hosting beyond a local network
 
@@ -60,12 +60,14 @@ This is not production-hardened: there are no accounts, persistent games, rate l
 
 ## Rules implemented
 
-- The board has 9 files × 10 ranks, a river and two palaces. Pieces occupy the standard xiangqi starting points; black is at the top and red at the bottom. Red moves first.
-- Each side has one general, two advisors, elephants, horses, rooks and cannons, and five soldiers. **All 16 identities on each side, including the general, are shuffled independently among that side's 16 starting points** using Fisher–Yates. The color of a covered piece is public; its true identity is hidden from both players. A general may start outside its usual palace.
-- Each turn consists of exactly one action: **flip one of your own covered pieces in place**, or **move one of your already revealed pieces**. A flip ends the turn. Covered pieces cannot move, attack, be captured, or be landed on; they still block lines and can serve as cannon screens. There is no starting-square movement role.
-- Revealed pieces move and capture according to their true xiangqi identity, with no rank-based capture ladder: generals and advisors are palace-limited; elephants move two diagonally with an unblocked eye and may land only on their own side of the river; horses have a blockable leg; rooks travel along open ranks and files; cannons move similarly but capture over exactly one screen; soldiers move forward and can also move sideways after crossing the river. A piece revealed outside its usual area may be unable to move. Captures remain visible in the captured-piece list.
-- A covered general cannot be checked or captured. Once revealed, a general can be captured or checkmated. Moves may not leave your revealed general in check, and two revealed generals may not face each other along an open file (the flying-general rule). If you start your turn in check, you must resolve it by moving; flipping cannot resolve check. Since the hidden identity is unknown, flipping is still allowed when it reveals your general into check, and the opponent may capture it immediately.
-- Capturing or checkmating the revealed enemy general wins. A player with no legal flip or move loses, including stalemate when not in check.
+- The board has 9 files × 10 ranks, a river and two palaces. Pieces occupy the standard xiangqi starting points; the black palace is at the top and the red palace at the bottom. Red moves first.
+- Each color has one general, two advisors, elephants, horses, rooks and cannons, and five soldiers. The non-fixed red and black pieces are shuffled among the **32 standard starting points**, so either color may appear on either half. Covered backs are identical; ownership is known to the engine and faces remain hidden.
+- Generals always occupy the center of their own home rank, with advisors immediately beside them. Elephants are reserved for legal landings on their own side; every piece must have a possible move on an otherwise empty board. After these placements, the remaining pieces are Fisher–Yates shuffled over the free standard points. The fixed general and advisor positions—and, on these 32 points, the elephant positions—are therefore deducible even while covered.
+- A turn is either **move an already revealed piece**, or **flip one of your own covered pieces and optionally move that same piece immediately**. Choose **End turn** to leave it in place; you cannot flip twice or move a different piece in that chain. Covered pieces cannot move or attack, but they block lines and can serve as cannon screens. There is no starting-square movement role.
+- A revealed piece may capture **any covered piece**, including one of its own color, using its normal movement and capture rules. Capturing a covered piece reveals its identity and color in the capture list. Revealed friendly pieces cannot be captured.
+- Revealed pieces move and capture according to their true xiangqi identity, with no rank-based capture ladder: generals and advisors are palace-limited; elephants move two diagonally with an unblocked eye and may land only on their own side of the river; horses have a blockable leg; rooks travel along open ranks and files; cannons move similarly but capture over exactly one screen; soldiers move forward and can also move sideways after crossing the river. Other pieces may temporarily block a revealed piece. Captures remain visible in the captured-piece list.
+- A covered general cannot be checked but **can be captured**, revealing it. Capturing the opponent's general wins, even if it was covered; capturing your own covered general loses. A revealed enemy general can also be checkmated. Moves may not leave your revealed general in check, and two revealed generals may not face each other along an open file (the flying-general rule). If you start your turn in check, you must resolve it by moving; flipping cannot resolve check. A flip may reveal your general into check: you can move it immediately if legal, or end the turn and risk capture.
+- A player with no legal flip or move loses, including stalemate when not in check.
 - There is **no automatic draw** or perpetual-check adjudication for repetition, a move count, or any other condition in this MVP, so a game can continue indefinitely.
 
 ## Project layout

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GameView, Player } from '../game/engine';
-import { isSupportedGameView, type ClientMessage, type ServerMessage } from './protocol';
+import { isSupportedRoomState, type ClientMessage, type ServerMessage } from './protocol';
 
 type RoomStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 
@@ -111,7 +111,7 @@ export function useRoom() {
           error: null,
         }));
       } else if (message.type === 'state') {
-        if (!isSupportedGameView(message.game)) {
+        if (!isSupportedRoomState(message)) {
           setSession((current) => ({
             ...current,
             status: 'failed',
