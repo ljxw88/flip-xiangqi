@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GameView, Player } from '../game/engine';
-import type { ClientMessage, ServerMessage } from './protocol';
+import { isSupportedRoomState, type ClientMessage, type ServerMessage } from './protocol';
 
 type RoomStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 
@@ -111,6 +111,18 @@ export function useRoom() {
           error: null,
         }));
       } else if (message.type === 'state') {
+        if (!isSupportedRoomState(message)) {
+          setSession((current) => ({
+            ...current,
+            status: 'failed',
+            game: null,
+            connected: [false, false],
+            pending: false,
+            error: 'The room server uses an incompatible game version. Restart it after updating.',
+          }));
+          socket.close();
+          return;
+        }
         setSession((current) => ({
           ...current,
           status: 'connected',

@@ -8,7 +8,7 @@ import {
   type GameState,
   type Player,
 } from '../src/game/engine';
-import type { ServerMessage } from '../src/multiplayer/protocol';
+import { ROOM_PROTOCOL_VERSION, type ServerMessage } from '../src/multiplayer/protocol';
 
 interface Seat {
   readonly token: string;
@@ -39,6 +39,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseAction(value: unknown): Action | null {
   if (!isRecord(value)) return null;
+  if (value.type === 'end-turn') return { type: 'end-turn' };
   if (value.type === 'flip' && Number.isInteger(value.at)) {
     return { type: 'flip', at: value.at as number };
   }
@@ -59,6 +60,7 @@ function connected(room: Room, player: Player): boolean {
 function broadcast(room: Room): void {
   const message: ServerMessage = {
     type: 'state',
+    version: ROOM_PROTOCOL_VERSION,
     game: toGameView(room.game),
     connected: [connected(room, 0), connected(room, 1)],
   };
