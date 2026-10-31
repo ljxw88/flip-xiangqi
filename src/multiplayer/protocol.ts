@@ -1,6 +1,6 @@
 import { BOARD_SIZE, type Action, type GameView, type Player } from '../game/engine';
 
-export const ROOM_PROTOCOL_VERSION = 3;
+export const ROOM_PROTOCOL_VERSION = 4;
 
 /** Reject incompatible board data before rendering it. */
 export function isSupportedGameView(value: unknown): value is GameView {

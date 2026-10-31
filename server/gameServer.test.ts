@@ -137,17 +137,15 @@ describe('WebSocket rooms', () => {
     const hidden = joined.game.board.filter((square) => square && !square.faceUp);
     expect(hidden).toHaveLength(32);
     expect(hidden.every((square) => square && !square.faceUp &&
-      !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
-    const red = joined.game.board.findIndex((square) => square && !square.faceUp && square.color === 'red');
-    const black = joined.game.board.findIndex((square) => square && !square.faceUp && square.color === 'black');
+      !('color' in square) && !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
+    const red = at(9, 4);
+    const black = at(0, 4);
 
     const third = await connect();
     third.send({ type: 'join', room: hostSeat.room });
     expect((await third.next('error')).message).toMatch(/two players/i);
     guest.send({ type: 'action', action: { type: 'flip', at: black } });
     expect((await guest.next('error')).message).toMatch(/not your turn/i);
-    host.send({ type: 'action', action: { type: 'flip', at: black } });
-    expect((await host.next('error')).message).toMatch(/not a legal action/i);
     host.send({ type: 'action', action: { type: 'move', from: red, to: at(5, 0) } });
     expect((await host.next('error')).message).toMatch(/not a legal action/i);
 
@@ -158,7 +156,7 @@ describe('WebSocket rooms', () => {
     expect(first.game.turn).toBe(0);
     expect(first.game.board[red]).toMatchObject({ faceUp: true, piece: { color: 'red' } });
     expect(first.game.lastAction).toMatchObject({ type: 'flip', at: red });
-    expect(first.game.board[black]).toEqual({ faceUp: false, color: 'black' });
+    expect(first.game.board[black]).toEqual({ faceUp: false });
     guest.send({ type: 'action', action: { type: 'flip', at: black } });
     expect((await guest.next('error')).message).toMatch(/not your turn/i);
     host.send({ type: 'action', action: { type: 'end-turn' } });
@@ -178,7 +176,7 @@ describe('WebSocket rooms', () => {
     ]);
     await useGameFactory(() => game);
     const { host, guest, joined } = await pair();
-    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red' });
+    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false });
     host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(6, 2) } });
     expect((await host.next('error')).message).toMatch(/not a legal action/i);
     host.socket.send(JSON.stringify({
@@ -197,6 +195,47 @@ describe('WebSocket rooms', () => {
     expect(movedAgain.game.board[at(6, 2)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'rook' } });
     expect(movedAgain.game.turn).toBe(1);
     expect(movedAgain.game.pendingFlip).toBeNull();
+  });
+
+  it('ends the turn immediately when a player flips an opponent piece', async () => {
+    const game = customPosition([
+      [3, 0, { faceUp: false, color: 'black', rank: 'horse' }],
+      [6, 0, { faceUp: false, color: 'red', rank: 'rook' }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest, joined } = await pair();
+    expect(joined.game.board[at(3, 0)]).toEqual({ faceUp: false });
+    host.send({ type: 'action', action: { type: 'flip', at: at(3, 0) } });
+    const flipped = await guest.next('state', (message) => message.game.board[at(3, 0)]?.faceUp === true);
+    expect(flipped.game.board[at(3, 0)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'horse' } });
+    expect(flipped.game.turn).toBe(1);
+    expect(flipped.game.pendingFlip).toBeNull();
+    expect(flipped.game.board[at(6, 0)]).toEqual({ faceUp: false });
+    host.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(5, 1) } });
+    expect((await host.next('error')).message).toMatch(/not your turn/i);
+    guest.send({ type: 'action', action: { type: 'end-turn' } });
+    expect((await guest.next('error')).message).toMatch(/not a legal action/i);
+    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(5, 1) } });
+    const moved = await host.next('state', (message) => message.game.board[at(5, 1)]?.faceUp === true);
+    expect(moved.game.board[at(5, 1)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'horse' } });
+    expect(moved.game.turn).toBe(0);
+  });
+
+  it('broadcasts checkmate if flipping the opponent general exposes a mating attack', async () => {
+    const game = customPosition([
+      [0, 3, null], [0, 4, { faceUp: false, color: 'black', rank: 'general' }],
+      [1, 3, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [1, 5, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [3, 4, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [6, 4, { faceUp: true, piece: { color: 'red', rank: 'soldier' } }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest } = await pair();
+    host.send({ type: 'action', action: { type: 'flip', at: at(0, 4) } });
+    const won = await guest.next('state', (message) => message.game.outcome !== null);
+    expect(won.game.outcome).toEqual({ winner: 0, reason: 'checkmate' });
+    expect(won.game.pendingFlip).toBeNull();
+    expect(won.game.board[at(0, 4)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'general' } });
   });
 
   it.each<['red' | 'black']>([['red'], ['black']])(
@@ -222,8 +261,8 @@ describe('WebSocket rooms', () => {
   it('lets a player flip their color on the opposite half in a mixed deal', async () => {
     await useGameFactory(() => createGame(() => 0.999999));
     const { host, guest, joined } = await pair();
-    expect(joined.game.board[at(0, 0)]).toEqual({ faceUp: false, color: 'red' });
-    expect(joined.game.board[at(9, 0)]).toEqual({ faceUp: false, color: 'black' });
+    expect(joined.game.board[at(0, 0)]).toEqual({ faceUp: false });
+    expect(joined.game.board[at(9, 0)]).toEqual({ faceUp: false });
     host.send({ type: 'action', action: { type: 'flip', at: at(0, 0) } });
     const flipped = await guest.next('state', (message) => message.game.pendingFlip === at(0, 0));
     expect(flipped.game.board[at(0, 0)]).toMatchObject({ faceUp: true, piece: { color: 'red' } });
@@ -272,7 +311,7 @@ describe('WebSocket rooms', () => {
     expect((await guest.next('error')).message).toMatch(/not a legal action/i);
     guest.send({ type: 'action', action: { type: 'move', from: at(0, 4), to: at(0, 3) } });
     const escaped = await host.next('state', (message) => message.game.turn === 0 && message.game.lastAction !== null);
-    expect(escaped.game.board[at(3, 8)]).toEqual({ faceUp: false, color: 'black' });
+    expect(escaped.game.board[at(3, 8)]).toEqual({ faceUp: false });
   });
 
   it('broadcasts the identity of a captured covered enemy and retains it after later moves', async () => {
@@ -282,7 +321,7 @@ describe('WebSocket rooms', () => {
     ]);
     await useGameFactory(() => game);
     const { host, guest, joined } = await pair();
-    expect(joined.game.board[at(5, 2)]).toEqual({ faceUp: false, color: 'black' });
+    expect(joined.game.board[at(5, 2)]).toEqual({ faceUp: false });
     host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(5, 2) } });
     const [forHost, forGuest] = await Promise.all([
       host.next('state', (message) => message.game.captures.length === 1),
@@ -315,9 +354,9 @@ describe('WebSocket rooms', () => {
   });
 
   it('pauses on disconnect and resumes the same seat and game with its session token', async () => {
-    const { host, guest, hostSeat, joined } = await pair();
-    const red = joined.game.board.findIndex((square) => square && !square.faceUp && square.color === 'red');
-    const black = joined.game.board.findIndex((square) => square && !square.faceUp && square.color === 'black');
+    const { host, guest, hostSeat } = await pair();
+    const red = at(9, 4);
+    const black = at(0, 4);
     host.send({ type: 'action', action: { type: 'flip', at: red } });
     const before = await guest.next('state', (message) => message.game.pendingFlip === red);
     host.socket.close();
@@ -388,7 +427,7 @@ describe('WebSocket rooms', () => {
     ]);
     await useGameFactory(() => game);
     const { host, guest, joined } = await pair();
-    expect(joined.game.board[at(7, 4)]).toEqual({ faceUp: false, color: 'red' });
+    expect(joined.game.board[at(7, 4)]).toEqual({ faceUp: false });
     host.send({ type: 'action', action: { type: 'flip', at: at(7, 4) } });
     const revealed = await guest.next('state', (message) => message.game.pendingFlip === at(7, 4));
     expect(revealed.game.turn).toBe(0);
@@ -411,7 +450,7 @@ describe('WebSocket rooms', () => {
       ]);
       await useGameFactory(() => game);
       const { host, guest, joined } = await pair();
-      expect(joined.game.board[at(5, 3)]).toEqual({ faceUp: false, color });
+      expect(joined.game.board[at(5, 3)]).toEqual({ faceUp: false });
       host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(5, 3) } });
       const won = await guest.next('state', (message) => message.game.outcome !== null);
       expect(won.game.outcome).toEqual({ winner, reason: 'general-captured' });

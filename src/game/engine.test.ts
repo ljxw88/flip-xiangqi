@@ -21,6 +21,7 @@ import {
 const at = (row: number, column: number) => row * BOARD_COLUMNS + column;
 const up = (color: Color, rank: Rank): Square => ({ faceUp: true, piece: { color, rank } });
 const covered = (color: Color, rank: Rank): Square => ({ faceUp: false, color, rank });
+const trueColor = (square: Square): Color | null => square ? (square.faceUp ? square.piece.color : square.color) : null;
 
 function position(entries: Array<[number, number, Square]>, turn: Player = 0): GameState {
   const board: Square[] = Array(BOARD_SIZE).fill(null);
@@ -78,8 +79,8 @@ describe('full-cover setup', () => {
     const top = game.board.slice(0, 5 * BOARD_COLUMNS);
     const bottom = game.board.slice(5 * BOARD_COLUMNS);
     for (const half of [top, bottom]) {
-      expect(half.some((square) => squareColor(square) === 'red')).toBe(true);
-      expect(half.some((square) => squareColor(square) === 'black')).toBe(true);
+      expect(half.some((square) => trueColor(square) === 'red')).toBe(true);
+      expect(half.some((square) => trueColor(square) === 'black')).toBe(true);
     }
   });
 
@@ -128,22 +129,24 @@ describe('full-cover setup', () => {
     expect(next.pendingFlip).toBe(at(9, 4));
   });
 
-  it('exposes only the color of every covered piece to both players', () => {
+  it('hides the color and rank of every covered piece from both players', () => {
     const view = toGameView(createGame(() => 0));
     const hidden = view.board.filter((square) => square && !square.faceUp);
     expect(hidden).toHaveLength(32);
     expect(hidden.every((square) => square && !square.faceUp &&
-      !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
+      !('color' in square) && !('rank' in square) && !('piece' in square) && !('cover' in square))).toBe(true);
     expect(JSON.stringify(view)).not.toMatch(/general|soldier|rook|elephant|advisor|horse|cannon/);
   });
 
-  it('offers exactly the current player’s 16 flips, not covered-piece moves', () => {
+  it('offers all 32 covered pieces as flips, not covered-piece moves', () => {
     const game = createGame(() => 0);
-    expect(legalActions(game)).toHaveLength(16);
-    expect(legalActions(game).every((action) => action.type === 'flip' && squareColor(game.board[action.at]) === 'red')).toBe(true);
+    expect(legalActions(game)).toHaveLength(32);
+    expect(legalActions(game).every((action) => action.type === 'flip')).toBe(true);
     expect(applyAction(game, move(6, 0, 5, 0)).ok).toBe(false);
-    const black = game.board.findIndex((square) => squareColor(square) === 'black');
-    expect(applyAction(game, { type: 'flip', at: black }).ok).toBe(false);
+    const black = game.board.findIndex((square) => trueColor(square) === 'black');
+    const flipped = play(game, { type: 'flip', at: black });
+    expect(flipped.turn).toBe(1);
+    expect(flipped.pendingFlip).toBeNull();
     expect(applyAction(game, endTurn).ok).toBe(false);
     expect(applyAction(game, flip(4, 4)).ok).toBe(false);
     expect(applyAction(game, { type: 'flip', at: -1 }).ok).toBe(false);
@@ -202,21 +205,68 @@ describe('flipping and secrecy', () => {
     expect(next.captures).toEqual([{ piece: { color, rank: 'horse' }, wasHidden: true }]);
   });
 
-  it('cannot flip an opponent, an empty point, or an already revealed piece', () => {
+  it('cannot flip an empty point or an already revealed piece', () => {
     const game = position([[6, 0, covered('red', 'rook')], [3, 0, covered('black', 'horse')]]);
-    expect(applyAction(game, flip(3, 0)).ok).toBe(false);
     expect(applyAction(game, flip(5, 0)).ok).toBe(false);
     expect(applyAction(game, flip(9, 4)).ok).toBe(false);
+  });
+
+  it('ends the turn immediately when the flipped piece belongs to the opponent', () => {
+    const game = position([[3, 0, covered('black', 'horse')], [6, 0, covered('red', 'rook')]]);
+    const next = play(game, flip(3, 0));
+    expect(next.board[at(3, 0)]).toEqual(up('black', 'horse'));
+    expect(next.turn).toBe(1);
+    expect(next.pendingFlip).toBeNull();
+    expect(legalMovesFrom(next.board, at(3, 0), 'red')).toEqual([]);
+    expect(applyAction(next, endTurn).ok).toBe(false);
+    expect(play(next, move(3, 0, 5, 1)).turn).toBe(0);
+  });
+
+  it('also ends black’s turn immediately after flipping a red piece', () => {
+    const game = position([[6, 0, covered('red', 'rook')]], 1);
+    const next = play(game, flip(6, 0));
+    expect(next.board[at(6, 0)]).toEqual(up('red', 'rook'));
+    expect(next.turn).toBe(0);
+    expect(next.pendingFlip).toBeNull();
+  });
+
+  it('immediately adjudicates checkmate after flipping the opponent’s general', () => {
+    const game = position([
+      [0, 3, null], [0, 4, covered('black', 'general')], [1, 3, up('red', 'rook')],
+      [1, 5, up('red', 'rook')], [3, 4, up('red', 'rook')], [6, 4, up('red', 'soldier')],
+    ]);
+    const next = play(game, flip(0, 4));
+    expect(next.turn).toBe(1);
+    expect(next.pendingFlip).toBeNull();
+    expect(next.outcome).toEqual({ winner: 0, reason: 'checkmate' });
+  });
+
+  it('allows an opponent flip to reveal an attack on the flipping player’s general', () => {
+    const game = position([[4, 4, covered('black', 'rook')]]);
+    expect(isInCheck(game.board, 'red')).toBe(false);
+    const next = play(game, flip(4, 4));
+    expect(next.turn).toBe(1);
+    expect(isInCheck(next.board, 'red')).toBe(true);
+    expect(play(next, move(4, 4, 9, 4)).outcome).toEqual({ winner: 1, reason: 'general-captured' });
+  });
+
+  it('never lets a player move a revealed piece of the opposing color', () => {
+    const game = position([[3, 0, up('black', 'horse')]]);
+    expect(legalMovesFrom(game.board, at(3, 0), 'red')).toEqual([]);
+    expect(applyAction(game, move(3, 0, 5, 1)).ok).toBe(false);
   });
 
   it('does not change legal actions or public views when only covered identities differ', () => {
     const first = position([[9, 4, null], [6, 0, covered('red', 'general')], [6, 2, covered('red', 'rook')]]);
     const second = position([[9, 4, null], [6, 0, covered('red', 'rook')], [6, 2, covered('red', 'general')]]);
+    const swappedColor = position([[9, 4, null], [6, 0, covered('black', 'rook')], [6, 2, covered('red', 'general')]]);
     expect(toGameView(first)).toEqual(toGameView(second));
+    expect(toGameView(first)).toEqual(toGameView(swappedColor));
     expect(legalActions(first)).toEqual(legalActions(second));
+    expect(legalActions(first)).toEqual(legalActions(swappedColor));
     expect(isInCheck(first.board, 'red')).toBe(false);
     expect(isInCheck(second.board, 'red')).toBe(false);
-    expect(toGameView(first).board[at(6, 0)]).toEqual({ faceUp: false, color: 'red' });
+    expect(toGameView(first).board[at(6, 0)]).toEqual({ faceUp: false });
   });
 
   it('allows a flipped general to move immediately within its palace', () => {
@@ -313,7 +363,7 @@ describe('revealed xiangqi movement and covered captures', () => {
     expect(next.board[at(5, 6)]).toEqual(up('red', 'rook'));
     expect(next.captures).toEqual([{ piece: { color: 'black', rank: 'horse' }, wasHidden: true }]);
     expect(toGameView(next).captures).toEqual(next.captures);
-    expect(toGameView(game).board[at(5, 6)]).toEqual({ faceUp: false, color: 'black' });
+    expect(toGameView(game).board[at(5, 6)]).toEqual({ faceUp: false });
     expect(next.outcome).toBeNull();
   });
 
@@ -476,11 +526,11 @@ describe('check and game end', () => {
     expect(next.outcome).toEqual({ winner: 0, reason: 'stalemate' });
   });
 
-  it('does not declare stalemate if an own covered piece may still be flipped', () => {
+  it('does not declare stalemate if any covered piece may still be flipped', () => {
     const game = position([
       [0, 3, null], [0, 4, up('black', 'general')], [2, 3, up('red', 'rook')],
       [2, 5, up('red', 'rook')], [1, 0, up('red', 'rook')], [6, 4, up('red', 'soldier')],
-      [3, 8, covered('black', 'elephant')],
+      [3, 8, covered('red', 'elephant')],
     ]);
     const next = play(game, move(6, 4, 5, 4));
     expect(next.outcome).toBeNull();
@@ -513,15 +563,17 @@ describe('complete games', () => {
         const color = game.colors[game.turn];
         const previousTurn = game.turn;
         const previousCount = game.board.filter(Boolean).length;
+        const flipped = action.type === 'flip' ? game.board[action.at] : null;
         const target = action.type === 'move' ? game.board[action.to] : null;
         if (target?.faceUp) expect(target.piece.color).not.toBe(color);
         const capturedHidden = Boolean(target && !target.faceUp);
         game = play(game, action);
         if (action.type === 'flip') {
-          expect(game.turn).toBe(previousTurn);
-          expect(game.pendingFlip).toBe(action.at);
+          if (!flipped || flipped.faceUp) throw new Error('Expected a covered piece');
+          expect(game.turn).toBe(flipped.color === color ? previousTurn : previousTurn === 0 ? 1 : 0);
+          expect(game.pendingFlip).toBe(flipped.color === color ? action.at : null);
           expect(game.board[action.at]?.faceUp).toBe(true);
-          expect(squareColor(game.board[action.at])).toBe(color);
+          expect(squareColor(game.board[action.at])).toBe(flipped.color);
         } else if (action.type === 'move') {
           expect(game.turn).not.toBe(previousTurn);
           expect(game.pendingFlip).toBeNull();
@@ -543,6 +595,7 @@ describe('complete games', () => {
         for (const square of toGameView(game).board) {
           if (square && !square.faceUp) {
             expect(square).not.toHaveProperty('rank');
+            expect(square).not.toHaveProperty('color');
             expect(square).not.toHaveProperty('cover');
           }
         }

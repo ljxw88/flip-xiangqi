@@ -17,14 +17,14 @@ export interface Piece {
   readonly rank: Rank;
 }
 
-// A covered piece's color is public; its identity, including a general, is not.
+// The authoritative board keeps covered colors and ranks private.
 export type Square =
   | { readonly faceUp: false; readonly color: Color; readonly rank: Rank }
   | { readonly faceUp: true; readonly piece: Piece }
   | null;
 
 export type PublicSquare =
-  | { readonly faceUp: false; readonly color: Color }
+  | { readonly faceUp: false }
   | { readonly faceUp: true; readonly piece: Piece }
   | null;
 
@@ -49,7 +49,7 @@ export interface GameView {
   readonly outcome: Outcome | null;
   readonly lastAction: LastAction | null;
   readonly captures: readonly Capture[];
-  /** A flip may be followed by a move of this piece, or an explicit end-turn. */
+  /** A same-color flip may be followed by a move of this piece, or an explicit end-turn. */
   readonly pendingFlip: number | null;
 }
 
@@ -91,8 +91,7 @@ function inPalace(row: number, column: number, color: Color): boolean {
 }
 
 export function squareColor(square: PublicSquare): Color | null {
-  if (!square) return null;
-  return square.faceUp ? square.piece.color : square.color;
+  return square?.faceUp ? square.piece.color : null;
 }
 
 function shuffle<T>(values: T[], random: () => number): void {
@@ -305,10 +304,9 @@ export function legalActions(game: GameView): Action[] {
   const checked = isInCheck(game.board, color);
   const actions: Action[] = [];
   game.board.forEach((square, from) => {
-    if (squareColor(square) !== color) return;
     if (square && !square.faceUp) {
       if (!checked) actions.push({ type: 'flip', at: from });
-    } else {
+    } else if (square?.piece.color === color) {
       for (const to of legalMovesFrom(game.board, from, color)) actions.push({ type: 'move', from, to });
     }
   });
@@ -326,15 +324,15 @@ export function applyAction(game: GameState, action: Action): ActionResult {
   if (action.type === 'flip') {
     const square = board[action.at];
     if (game.pendingFlip !== null || !Number.isInteger(action.at) || action.at < 0 || action.at >= BOARD_SIZE ||
-      !square || square.faceUp || square.color !== color || isInCheck(board, color)) {
+      !square || square.faceUp || isInCheck(board, color)) {
       return { ok: false, error: 'That is not a legal action.' };
     }
     const piece: Piece = { color: square.color, rank: square.rank };
     board[action.at] = { faceUp: true, piece };
-    return {
-      ok: true,
-      state: { ...game, board, pendingFlip: action.at, lastAction: { type: 'flip', at: action.at, piece } },
-    };
+    lastAction = { type: 'flip', at: action.at, piece };
+    if (piece.color === color) {
+      return { ok: true, state: { ...game, board, pendingFlip: action.at, lastAction } };
+    }
   } else if (action.type === 'move') {
     if ((game.pendingFlip !== null && action.from !== game.pendingFlip) ||
       !legalMovesFrom(board, action.from, color).includes(action.to)) {
@@ -395,7 +393,7 @@ export function toGameView(game: GameState): GameView {
   return {
     board: game.board.map((square): PublicSquare => {
       if (!square) return null;
-      if (!square.faceUp) return { faceUp: false, color: square.color };
+      if (!square.faceUp) return { faceUp: false };
       return { faceUp: true, piece: { ...square.piece } };
     }),
     turn: game.turn,

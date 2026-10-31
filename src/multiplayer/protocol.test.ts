@@ -32,6 +32,6 @@ describe('room protocol compatibility', () => {
     const state = { type: 'state', version: ROOM_PROTOCOL_VERSION, game, connected: [true, false] };
     expect(isSupportedRoomState(state)).toBe(true);
     expect(isSupportedRoomState({ type: 'state', game, connected: [true, false] })).toBe(false);
-    expect(isSupportedRoomState({ ...state, version: 2 })).toBe(false);
+    expect(isSupportedRoomState({ ...state, version: 3 })).toBe(false);
   });
 });

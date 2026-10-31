@@ -187,11 +187,7 @@ export default function App() {
     } else if (game.pendingFlip !== null) {
       setBoardMessage('Move the flipped piece or end your turn.');
     } else if (square && !square.faceUp) {
-      if (square.color !== currentColor) {
-        setBoardMessage('That covered piece cannot be flipped by you.');
-      } else if (!checked) {
-        perform({ type: 'flip', at: index });
-      }
+      if (!checked) perform({ type: 'flip', at: index });
     } else if (square && squareColor(square) === currentColor) {
       setSelected((current) => current === index ? null : index);
       setBoardMessage('');
@@ -282,7 +278,7 @@ export default function App() {
     if (boardMessage) return boardMessage;
     const square = selected === null ? null : game.board[selected];
     if (square) return destinations.length ? 'Choose a highlighted destination.' : 'This piece has no legal moves.';
-    return 'Flip one of your covered pieces, or select a revealed piece to move.';
+    return 'Flip any covered piece, or move one of your revealed pieces.';
   }
 
   function playerCard(player: Player) {
@@ -443,9 +439,9 @@ export default function App() {
             <h2>How to play</h2>
             <ol>
               <li>Red plays first. All 32 pieces start covered and colors are mixed across both sides.</li>
-              <li>Flip one of your covered pieces, then optionally move that same piece, or end your turn. You can instead move a revealed piece.</li>
+              <li>Flip any covered piece. If it is your color, you may move it immediately; if not, your turn ends.</li>
               <li>Covered pieces block but cannot move or attack. Capture any covered piece—even your own—to reveal it.</li>
-              <li>Revealed pieces use their true xiangqi movement, including palace and river limits.</li>
+              <li>Move only your own revealed pieces, using true xiangqi movement, including palace and river limits.</li>
               <li>Capture the enemy general or checkmate it when revealed to win. Capturing your own general loses.</li>
             </ol>
             <p className="rank-order"><strong>Remember</strong> A covered general can be captured but not checked. A player in check must move to safety; no legal action is a loss.</p>
