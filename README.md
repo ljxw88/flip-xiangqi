@@ -1,6 +1,6 @@
-# Flip Xiangqi · 暗棋
+# Jieqi · 揭棋
 
-A playable dark-chess MVP: two-player hotseat in one browser, or a shareable WebSocket room for two browsers. Rules are implemented in a pure TypeScript engine; the online server holds the authoritative board and never sends the identities of face-down pieces to clients.
+A full-board dark-xiangqi game for two people: play hotseat in one browser, or share a WebSocket room. The pure TypeScript engine enforces the rules; the online server holds the authoritative board and never sends covered identities to either player until a piece moves or is captured.
 
 ## Requirements and local play
 
@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: take turns on the same device. Click a face-down piece to flip it, or click one of your face-up pieces and then a highlighted destination. **New hotseat game** resets the board.
+Open the address printed by Vite (normally <http://localhost:5173/>). Hotseat starts immediately: red moves first. Select one of your pieces, covered or revealed, then select a highlighted destination. A covered piece reveals itself when it moves; there is no separate flip action. **New hotseat game** resets the board.
 
 ```sh
 npm test       # rules and WebSocket room tests
@@ -31,7 +31,7 @@ npm run dev
 ```
 
 1. Open the app, choose **Create online room**, and copy the invite link (or room code).
-2. Open the link in a second, separate browser session, or enter the code there. Player 1 starts; the board is enabled only for the player whose turn it is.
+2. Open the link in a second, separate browser session, or enter the code there. Player 1 is red and moves first; Player 2 is black. The board is enabled only for the player whose turn it is.
 3. For two devices on the same network, open the app on the host using `http://<host-LAN-IP>:5173/` **before** creating the room, and share the resulting link. `localhost` in a link refers to each device itself. Vite listens on network interfaces; allow port 5173 through the host firewall if necessary.
 
 Vite proxies `/ws` to the room server at `127.0.0.1:3001`, so the other browser needs access only to Vite's port. If changing the backend port, set `WS_PORT` to the same value for **both** commands. `WS_HOST` changes the server's bind address (default `127.0.0.1`).
@@ -58,14 +58,13 @@ This is not production-hardened: there are no accounts, persistent games, rate l
 
 ## Rules implemented
 
-- The board has 4 rows × 8 columns. Each color has one general, two each of advisor, elephant, rook, horse and cannon, and five soldiers. All 32 pieces start face-down in random positions.
-- Player 1 flips first and takes that piece's color; Player 2 takes the other color. On each turn, flip **any** face-down piece, or move one of your face-up pieces one orthogonal square.
-- Ordinary pieces move to an empty square or capture an enemy face-up piece of equal or lower rank: **general > advisor > elephant > rook > horse > cannon > soldier**. A soldier may capture a general, but a general may not capture a soldier. A normal move cannot land on a face-down or friendly piece.
-- A cannon moves one square when not capturing. To capture, it must jump exactly one intervening piece, of either color and face-up or face-down, along a row or column. The next piece must be an enemy face-up piece; its rank does not matter. Cannons cannot capture an adjacent piece or a face-down target.
-- A player wins immediately on capturing **all** opposing pieces, counting the actual colors of pieces still face-down. A player also wins if the opponent has no legal action on their next turn; flipping any remaining face-down piece is a legal action.
-- There is **no automatic draw** for repetition, a move count, or any other condition in this MVP, so a game can continue indefinitely. There are no check or facing-generals rules from full-board Xiangqi.
-
-These rules are provisional pending the referenced RedNote video and Jiaxu's confirmation.
+- The board has 9 files × 10 ranks, a river and two palaces. Pieces occupy the standard xiangqi starting points; black is at the top and red at the bottom. Red moves first.
+- Each side has one general, two advisors, elephants, horses, rooks and cannons, and five soldiers. Only the generals start face-up. The other **15 identities per side are independently shuffled among that side's 15 non-general starting points** using Fisher–Yates. A covered piece's color and starting-square role are known, but its true identity is hidden from both players.
+- A covered piece's **first move and capture use the role of its starting point**, not its hidden identity. For example, a covered piece on a soldier's starting point first moves like a soldier; it may then reveal as an elephant. It reveals immediately after moving and uses its true identity on later turns. There is no standalone flip.
+- Covered pieces occupy and block points, and can capture or be captured. A captured covered piece's true identity is revealed to both players and remains in the captured-piece list.
+- Revealed pieces use xiangqi movement: generals and advisors may land only in their own palace; elephants move two diagonally with an unblocked eye and may land only on their own side of the river; horses have a blockable leg; rooks travel along open ranks and files; cannons move similarly but capture over exactly one screen; soldiers move forward and can also move sideways after crossing the river. There is no rank-based capture restriction. These palace and river limits remain in effect after revelation, even if a piece is revealed outside its usual area.
+- A move may not leave your general in check, including the flying-general rule: opposing generals cannot face each other along an open file. Covered pieces threaten according to their starting-square role; once revealed they threaten according to their true identity. Checkmate wins, and a player with no legal move loses even when not in check (stalemate). The game ends before a general is captured.
+- There is **no automatic draw** or perpetual-check adjudication for repetition, a move count, or any other condition in this MVP, so a game can continue indefinitely.
 
 ## Project layout
 

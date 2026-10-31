@@ -2,10 +2,11 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket, { type WebSocketServer } from 'ws';
-import { BOARD_SIZE, createGame, type GameState, type Square } from '../src/game/engine';
+import { BOARD_COLUMNS, BOARD_SIZE, createGame, type GameState, type Square } from '../src/game/engine';
 import type { ClientMessage, ServerMessage } from '../src/multiplayer/protocol';
 import { createRoomServer } from './gameServer';
 
+const at = (row: number, column: number) => row * BOARD_COLUMNS + column;
 type MessageOf<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T }>;
 
 class TestClient {
@@ -56,10 +57,31 @@ class TestClient {
   }
 }
 
+function customPosition(entries: Array<[number, number, Square]>): GameState {
+  const board: Square[] = Array(BOARD_SIZE).fill(null);
+  board[at(9, 4)] = { faceUp: true, piece: { color: 'red', rank: 'general' } };
+  board[at(0, 3)] = { faceUp: true, piece: { color: 'black', rank: 'general' } };
+  for (const [row, column, square] of entries) board[at(row, column)] = square;
+  return { board, turn: 0, colors: ['red', 'black'], outcome: null, lastMove: null, captures: [] };
+}
+
 describe('WebSocket rooms', () => {
   let server: WebSocketServer;
   let url: string;
   let clients: TestClient[];
+
+  async function startServer(gameFactory?: () => GameState): Promise<void> {
+    server = createRoomServer({ port: 0, host: '127.0.0.1', reconnectGraceMs: 1000, gameFactory });
+    await once(server, 'listening');
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`;
+  }
+
+  async function useGameFactory(gameFactory: () => GameState): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await startServer(gameFactory);
+  }
 
   async function connect(): Promise<TestClient> {
     const client = new TestClient(url);
@@ -68,11 +90,22 @@ describe('WebSocket rooms', () => {
     return client;
   }
 
+  async function pair() {
+    const host = await connect();
+    host.send({ type: 'create' });
+    const hostSeat = await host.next('joined');
+    const waiting = await host.next('state');
+    const guest = await connect();
+    guest.send({ type: 'join', room: hostSeat.room });
+    const guestSeat = await guest.next('joined');
+    const joined = await guest.next('state');
+    await host.next('state', (message) => message.connected[1]);
+    return { host, guest, hostSeat, guestSeat, waiting, joined };
+  }
+
   beforeEach(async () => {
     clients = [];
-    server = createRoomServer({ port: 0, host: '127.0.0.1', reconnectGraceMs: 1000 });
-    await once(server, 'listening');
-    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`;
+    await startServer();
   });
 
   afterEach(async () => {
@@ -82,65 +115,117 @@ describe('WebSocket rooms', () => {
     });
   });
 
-  it('assigns seats, conceals hidden identities, and enforces alternating legal turns', async () => {
+  it('does not allow moves while a room is waiting for its second player', async () => {
     const host = await connect();
     host.send({ type: 'create' });
-    const hostSeat = await host.next('joined');
-    expect(hostSeat.player).toBe(0);
-    expect(hostSeat.room).toMatch(/^[0-9A-F]{8}$/);
-    const waiting = await host.next('state');
-    expect(waiting.connected).toEqual([true, false]);
-    expect(waiting.game.board).toEqual(Array(32).fill({ faceUp: false }));
-
-    host.send({ type: 'action', action: { type: 'flip', at: 0 } });
+    await host.next('joined');
+    expect((await host.next('state')).connected).toEqual([true, false]);
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
     expect((await host.next('error')).message).toMatch(/both players/i);
+  });
 
-    const guest = await connect();
-    guest.send({ type: 'join', room: hostSeat.room });
-    expect((await guest.next('joined')).player).toBe(1);
-    expect((await guest.next('state')).connected).toEqual([true, true]);
-    await host.next('state', (message) => message.connected[1]);
+  it('assigns sides, conceals both players’ covered identities and enforces legal turns', async () => {
+    const { host, guest, hostSeat, guestSeat, waiting, joined } = await pair();
+    expect(hostSeat.player).toBe(0);
+    expect(guestSeat.player).toBe(1);
+    expect(hostSeat.room).toMatch(/^[0-9A-F]{8}$/);
+    expect(waiting.connected).toEqual([true, false]);
+    expect(joined.connected).toEqual([true, true]);
+    expect(joined.game.board).toHaveLength(90);
+    expect(joined.game.colors).toEqual(['red', 'black']);
+    expect(joined.game.board[at(9, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'general' } });
+    expect(joined.game.board[at(0, 4)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'general' } });
+    const hidden = joined.game.board.filter((square) => square && !square.faceUp);
+    expect(hidden).toHaveLength(30);
+    expect(hidden.every((square) => square && !square.faceUp && !('rank' in square) && !('piece' in square))).toBe(true);
+    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red', cover: 'soldier' });
+    expect(joined.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black', cover: 'soldier' });
 
     const third = await connect();
     third.send({ type: 'join', room: hostSeat.room });
     expect((await third.next('error')).message).toMatch(/two players/i);
-
-    guest.send({ type: 'action', action: { type: 'flip', at: 0 } });
+    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
     expect((await guest.next('error')).message).toMatch(/not your turn/i);
+    host.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
+    expect((await host.next('error')).message).toMatch(/not a legal move/i);
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(4, 0) } });
+    expect((await host.next('error')).message).toMatch(/not a legal move/i);
 
-    host.send({ type: 'action', action: { type: 'flip', at: 0 } });
-    const firstFlip = await guest.next('state', (message) => message.game.turn === 1);
-    const revealed = firstFlip.game.board[0];
-    expect(revealed?.faceUp).toBe(true);
-    if (!revealed || !revealed.faceUp) throw new Error('Expected a revealed piece');
-    expect(firstFlip.game.colors[0]).toBe(revealed.piece.color);
-    expect(firstFlip.game.colors[1]).not.toBe(revealed.piece.color);
-    expect(firstFlip.game.board.slice(1)).toEqual(Array(31).fill({ faceUp: false }));
-
-    guest.send({ type: 'action', action: { type: 'flip', at: 0 } });
-    expect((await guest.next('error')).message).toMatch(/not a legal move/i);
-    guest.send({ type: 'action', action: { type: 'flip', at: 1 } });
-    const secondFlip = await host.next('state', (message) => message.game.board[1]?.faceUp === true);
-    expect(secondFlip.game.turn).toBe(0);
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    const first = await guest.next('state', (message) => message.game.turn === 1);
+    const firstForHost = await host.next('state', (message) => message.game.turn === 1);
+    expect(first.game).toEqual(firstForHost.game);
+    expect(first.game.board[at(6, 0)]).toBeNull();
+    expect(first.game.board[at(5, 0)]).toMatchObject({ faceUp: true, piece: { color: 'red' } });
+    expect(first.game.board[at(3, 0)]).toEqual({ faceUp: false, color: 'black', cover: 'soldier' });
+    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
+    const second = await host.next('state', (message) => message.game.board[at(4, 0)]?.faceUp === true);
+    expect(second.game.turn).toBe(0);
   });
 
-  it('pauses when a player disconnects and resumes the same seat and game with its session token', async () => {
-    const host = await connect();
-    host.send({ type: 'create' });
-    const hostSeat = await host.next('joined');
-    await host.next('state');
+  it('uses the covered starting role first, then validates the revealed role on later turns', async () => {
+    const game = customPosition([[6, 0, { faceUp: false, color: 'red', cover: 'soldier', rank: 'elephant' }]]);
+    await useGameFactory(() => game);
+    const { host, guest, joined } = await pair();
+    expect(joined.game.board[at(6, 0)]).toEqual({ faceUp: false, color: 'red', cover: 'soldier' });
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(8, 2) } });
+    expect((await host.next('error')).message).toMatch(/not a legal move/i);
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
+    const revealed = await guest.next('state', (message) => message.game.turn === 1);
+    expect(revealed.game.board[at(5, 0)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'elephant' } });
+    guest.send({ type: 'action', action: { type: 'move', from: at(0, 3), to: at(1, 3) } });
+    await host.next('state', (message) => message.game.turn === 0 && message.game.lastMove !== null);
+    host.send({ type: 'action', action: { type: 'move', from: at(5, 0), to: at(7, 2) } });
+    const movedAgain = await guest.next('state', (message) => message.game.board[at(7, 2)]?.faceUp === true);
+    expect(movedAgain.game.board[at(7, 2)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'elephant' } });
+  });
 
-    const guest = await connect();
-    guest.send({ type: 'join', room: hostSeat.room });
-    await guest.next('joined');
-    await guest.next('state');
-    await host.next('state', (message) => message.connected[1]);
+  it('rejects moves exposing the general even when the piece movement itself is valid', async () => {
+    const game = customPosition([
+      [0, 3, null], [0, 4, { faceUp: true, piece: { color: 'black', rank: 'general' } }],
+      [5, 4, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest } = await pair();
+    host.send({ type: 'action', action: { type: 'move', from: at(5, 4), to: at(5, 3) } });
+    expect((await host.next('error')).message).toMatch(/not a legal move/i);
+    host.send({ type: 'action', action: { type: 'move', from: at(5, 4), to: at(4, 4) } });
+    const next = await guest.next('state', (message) => message.game.turn === 1);
+    expect(next.game.board[at(4, 4)]).toEqual({ faceUp: true, piece: { color: 'red', rank: 'rook' } });
+  });
 
-    host.send({ type: 'action', action: { type: 'flip', at: 7 } });
+  it('reveals a captured covered piece to both players but keeps all other identities secret', async () => {
+    const game = customPosition([
+      [7, 1, { faceUp: false, color: 'red', cover: 'cannon', rank: 'horse' }],
+      [2, 1, { faceUp: false, color: 'black', cover: 'cannon', rank: 'soldier' }],
+      [0, 1, { faceUp: false, color: 'black', cover: 'horse', rank: 'advisor' }],
+    ]);
+    await useGameFactory(() => game);
+    const { host, guest } = await pair();
+    host.send({ type: 'action', action: { type: 'move', from: at(7, 1), to: at(0, 1) } });
+    const [forHost, forGuest] = await Promise.all([
+      host.next('state', (message) => message.game.turn === 1),
+      guest.next('state', (message) => message.game.turn === 1),
+    ]);
+    expect(forHost.game).toEqual(forGuest.game);
+    expect(forGuest.game.lastMove).toMatchObject({
+      piece: { color: 'red', rank: 'horse' },
+      captured: { color: 'black', rank: 'advisor' }, capturedWasHidden: true,
+    });
+    expect(forGuest.game.board[at(2, 1)]).toEqual({ faceUp: false, color: 'black', cover: 'cannon' });
+    expect(forGuest.game.captures).toEqual([{ piece: { color: 'black', rank: 'advisor' }, wasHidden: true }]);
+    guest.send({ type: 'action', action: { type: 'move', from: at(2, 1), to: at(2, 2) } });
+    const later = await host.next('state', (message) => message.game.turn === 0 && message.game.lastMove !== null);
+    expect(later.game.captures).toEqual(forGuest.game.captures);
+  });
+
+  it('pauses on disconnect and resumes the same seat and game with its session token', async () => {
+    const { host, guest, hostSeat } = await pair();
+    host.send({ type: 'action', action: { type: 'move', from: at(6, 0), to: at(5, 0) } });
     const before = await guest.next('state', (message) => message.game.turn === 1);
     host.socket.close();
     expect((await guest.next('state', (message) => !message.connected[0])).connected).toEqual([false, true]);
-    guest.send({ type: 'action', action: { type: 'flip', at: 8 } });
+    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
     expect((await guest.next('error')).message).toMatch(/both players/i);
 
     const intruder = await connect();
@@ -153,79 +238,47 @@ describe('WebSocket rooms', () => {
     const after = await resumed.next('state');
     expect(after.connected).toEqual([true, true]);
     expect(after.game).toEqual(before.game);
-    guest.send({ type: 'action', action: { type: 'flip', at: 8 } });
-    expect((await resumed.next('state', (message) => message.game.board[8]?.faceUp === true)).game.turn).toBe(0);
+    guest.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(4, 0) } });
+    expect((await resumed.next('state', (message) => message.game.board[at(4, 0)]?.faceUp === true)).game.turn).toBe(0);
   });
 
-  it('rejects malformed messages and does not allow a game in progress to be reset', async () => {
-    const host = await connect();
+  it('rejects malformed messages, the old flip action, and an early rematch', async () => {
+    const { host } = await pair();
     host.socket.send('not json');
     expect((await host.next('error')).message).toMatch(/invalid message/i);
-    host.send({ type: 'create' });
-    const { room } = await host.next('joined');
-    await host.next('state');
-
-    const guest = await connect();
-    guest.send({ type: 'join', room });
-    await guest.next('joined');
-    await guest.next('state');
-    await host.next('state', (message) => message.connected[1]);
-    host.socket.send(JSON.stringify({ type: 'action', action: { type: 'flip', at: '0' } }));
+    host.socket.send(JSON.stringify({ type: 'action', action: { type: 'move', from: '54', to: 45 } }));
+    expect((await host.next('error')).message).toMatch(/invalid action/i);
+    host.socket.send(JSON.stringify({ type: 'action', action: { type: 'flip', at: at(6, 0) } }));
     expect((await host.next('error')).message).toMatch(/invalid action/i);
     host.send({ type: 'rematch' });
     expect((await host.next('error')).message).toMatch(/finish the current game/i);
   });
 
-  it('broadcasts a win and lets either connected player start a fresh rematch', async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
-    const board: Square[] = Array(BOARD_SIZE).fill(null);
-    board[0] = { faceUp: true, piece: { color: 'red', rank: 'soldier' } };
-    board[1] = { faceUp: true, piece: { color: 'black', rank: 'general' } };
-    board[8] = { faceUp: false, piece: { color: 'red', rank: 'general' } };
-    const almostFinished: GameState = { board, turn: 0, colors: ['red', 'black'], outcome: null };
+  it('broadcasts checkmate and lets either connected player start a fresh rematch', async () => {
+    const game = customPosition([
+      [0, 3, null], [0, 4, { faceUp: true, piece: { color: 'black', rank: 'general' } }],
+      [1, 3, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [1, 5, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [3, 0, { faceUp: true, piece: { color: 'red', rank: 'rook' } }],
+      [6, 4, { faceUp: true, piece: { color: 'red', rank: 'soldier' } }],
+    ]);
     let gamesCreated = 0;
-    server = createRoomServer({
-      port: 0,
-      host: '127.0.0.1',
-      gameFactory: () => gamesCreated++ === 0 ? almostFinished : createGame(() => 0),
-    });
-    await once(server, 'listening');
-    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`;
-
-    const host = await connect();
-    host.send({ type: 'create' });
-    const { room } = await host.next('joined');
-    await host.next('state');
-    const guest = await connect();
-    guest.send({ type: 'join', room });
-    await guest.next('joined');
-    await guest.next('state');
-    await host.next('state', (message) => message.connected[1]);
-
-    host.send({ type: 'action', action: { type: 'move', from: 0, to: 1 } });
+    await useGameFactory(() => gamesCreated++ === 0 ? game : createGame(() => 0));
+    const { host, guest } = await pair();
+    host.send({ type: 'action', action: { type: 'move', from: at(3, 0), to: at(3, 4) } });
     const won = await guest.next('state', (message) => message.game.outcome !== null);
-    expect(won.game.outcome).toEqual({ winner: 0, reason: 'elimination' });
-    expect(won.game.board[8]).toEqual({ faceUp: false });
+    expect(won.game.outcome).toEqual({ winner: 0, reason: 'checkmate' });
+    expect(won.game.board[at(0, 4)]).toEqual({ faceUp: true, piece: { color: 'black', rank: 'general' } });
     guest.send({ type: 'rematch' });
-    const rematch = await host.next('state', (message) => message.game.colors[0] === null);
+    const rematch = await host.next('state', (message) => message.game.lastMove === null && message.game.board.filter(Boolean).length === 32);
     expect(rematch.game.turn).toBe(0);
-    expect(rematch.game.colors).toEqual([null, null]);
+    expect(rematch.game.colors).toEqual(['red', 'black']);
     expect(rematch.game.outcome).toBeNull();
-    expect(rematch.game.board).toEqual(Array(32).fill({ faceUp: false }));
+    expect(rematch.game.board.filter((square) => square && !square.faceUp)).toHaveLength(30);
   });
 
   it('keeps a room after a quick reconnect, then expires it after everyone leaves', async () => {
-    const host = await connect();
-    host.send({ type: 'create' });
-    const hostSeat = await host.next('joined');
-    await host.next('state');
-    const guest = await connect();
-    guest.send({ type: 'join', room: hostSeat.room });
-    const guestSeat = await guest.next('joined');
-    await guest.next('state');
-
+    const { host, guest, hostSeat, guestSeat } = await pair();
     const hostClosed = once(host.socket, 'close');
     const guestClosed = once(guest.socket, 'close');
     host.socket.terminate();

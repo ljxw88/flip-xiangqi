@@ -50,43 +50,54 @@ h1 span { color: #aa4430; font-family: Georgia, serif; font-size: 0.8em; letter-
 .game-heading h2 { margin-top: 5px; color: #273f33; font-size: clamp(21px, 2.7vw, 28px); line-height: 1.25; }
 .game-heading p:last-child { margin-top: 8px; color: #6c7769; font-size: 13px; line-height: 1.5; }
 
-.board-frame { padding: clamp(9px, 1.5vw, 15px); background: #624838; border: 1px solid #543d30; border-radius: 10px; box-shadow: inset 0 1px #a78968, 0 4px 10px #34261922; }
-.board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: clamp(3px, 0.7vw, 7px); }
+.board-frame { max-width: 720px; margin: 0 auto; padding: clamp(6px, 1.2vw, 12px); background: #624838; border: 1px solid #543d30; border-radius: 10px; box-shadow: inset 0 1px #a78968, 0 4px 10px #34261922; }
+.board { position: relative; width: 100%; aspect-ratio: 9 / 10; overflow: hidden; background: linear-gradient(110deg, #ebce9a, #f1d9ab 48%, #e4c38e); }
+.board-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.board-lines line { stroke: #84603f; stroke-width: 2.5; }
+.board-lines text { fill: #84603f; font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: 50px; font-weight: 600; }
+.board-intersections { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); grid-template-rows: repeat(10, minmax(0, 1fr)); }
 .square {
   position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
-  aspect-ratio: 1;
+  min-height: 0;
   padding: 0;
-  border: 1px solid #c29c66;
-  border-radius: 4px;
-  background: #e7c995;
-  box-shadow: inset 0 1px 4px #63412720;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
 }
-.square:not(:disabled):hover { background: #f2dba9; }
-.square--destination::after, .square--selected::after { content: ''; position: absolute; inset: 2px; border: 3px solid #35866a; border-radius: 4px; pointer-events: none; }
+.square:not(:disabled):hover { background: #fff7d855; }
+.square--last-move::before { content: ''; position: absolute; inset: 9%; border-radius: 50%; background: #dfa73b55; pointer-events: none; }
+.square--destination::after, .square--selected::after { content: ''; position: absolute; z-index: 2; inset: 5%; border: 3px solid #35866a; border-radius: 50%; pointer-events: none; }
 .square--selected::after { border-color: #b35337; }
 .piece {
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 81%;
+  width: 83%;
   aspect-ratio: 1;
   border: 2px solid #ab8a5e;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 25%, #fff9e7, #f1dfb5 72%, #dcc493);
   box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #e2c99c;
   font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif;
-  font-size: clamp(18px, 3.7vw, 38px);
+  font-size: clamp(17px, 3.3vw, 38px);
   font-weight: 700;
   line-height: 1;
 }
 .piece--red { color: #ae342a; }
 .piece--black { color: #202d2a; }
-.piece--hidden { color: #e8d0a3; border-color: #355c49; background: radial-gradient(circle at 35% 25%, #456e58, #214939); box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #557961; font-size: clamp(15px, 2.8vw, 27px); }
-.empty-mark { width: 5px; height: 5px; border-radius: 50%; background: #b78e5d77; }
+.piece--hidden { color: #f6e2c3; font-size: clamp(15px, 2.8vw, 27px); }
+.piece--hidden-red { border-color: #923d32; background: radial-gradient(circle at 35% 25%, #be6551, #8e302b); box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #c47e69; }
+.piece--hidden-black { border-color: #355c49; background: radial-gradient(circle at 35% 25%, #456e58, #214939); box-shadow: 0 2px 3px #38271655, inset 0 0 0 3px #557961; }
 .board-placeholder { min-height: 260px; display: grid; place-items: center; border: 1px dashed #d9cbb6; border-radius: 10px; color: #8a9184; font-size: 14px; }
+.capture-note { max-width: 720px; margin: 12px auto 0; color: #6c7769; font-size: 12px; line-height: 1.4; }
+.captured-list { max-width: 720px; margin: 12px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.captured-list strong { margin-right: 4px; color: #788577; font-size: 11px; }
+.captured-piece { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #cdb58b; border-radius: 50%; background: #f4e4c5; font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: 16px; font-weight: 700; }
+.captured-piece--red { color: #ae342a; }
+.captured-piece--black { color: #202d2a; }
 
 .players { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 19px; }
 .player-card { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 12px; border: 1px solid #e9e3d8; border-radius: 8px; }
@@ -128,6 +139,10 @@ input::placeholder { color: #a4aa9f; }
 .rank-order strong { display: block; color: #3d5948; }
 footer { padding: 25px 0 35px; color: #a19986; font-size: 11px; text-align: center; }
 
+@media (min-width: 901px) {
+  .board-frame { max-width: min(720px, calc(90vh - 245px)); }
+}
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
@@ -144,12 +159,12 @@ footer { padding: 25px 0 35px; color: #a19986; font-size: 11px; text-align: cent
   .layout { gap: 14px; }
   .play-area { padding: 15px 10px; }
   .game-heading { min-height: 95px; padding: 0 5px; }
-  .board-frame { padding: 7px; }
-  .board { gap: 3px; }
-  .square { border-radius: 3px; }
+  .board-frame { padding: 5px; }
   .piece { border-width: 1px; box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #e2c99c; font-size: clamp(17px, 5vw, 25px); }
-  .piece--hidden { box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #557961; font-size: clamp(14px, 4vw, 20px); }
-  .square--destination::after, .square--selected::after { inset: 1px; border-width: 2px; }
+  .piece--hidden { font-size: clamp(14px, 4vw, 20px); }
+  .piece--hidden-red { box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #c47e69; }
+  .piece--hidden-black { box-shadow: 0 1px 2px #38271655, inset 0 0 0 2px #557961; }
+  .square--destination::after, .square--selected::after { border-width: 2px; }
   .players { gap: 7px; margin-top: 13px; }
   .player-card { gap: 7px; padding: 9px 7px; }
   .player-card strong { font-size: 11px; }

@@ -39,9 +39,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseAction(value: unknown): Action | null {
   if (!isRecord(value)) return null;
-  if (value.type === 'flip' && Number.isInteger(value.at)) {
-    return { type: 'flip', at: value.at as number };
-  }
   if (value.type === 'move' && Number.isInteger(value.from) && Number.isInteger(value.to)) {
     return { type: 'move', from: value.from as number, to: value.to as number };
   }

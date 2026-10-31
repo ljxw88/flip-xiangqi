@@ -2,8 +2,11 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   applyAction,
   BOARD_COLUMNS,
+  BOARD_ROWS,
   createGame,
+  isInCheck,
   legalMovesFrom,
+  squareColor,
   toGameView,
   type Action,
   type Color,
@@ -31,7 +34,7 @@ function colorName(color: Color | null): string {
 function squareLabel(square: PublicSquare, index: number): string {
   const position = `Row ${Math.floor(index / BOARD_COLUMNS) + 1}, column ${(index % BOARD_COLUMNS) + 1}`;
   if (!square) return `${position}, empty`;
-  if (!square.faceUp) return `${position}, face-down piece`;
+  if (!square.faceUp) return `${position}, ${colorName(square.color)} covered piece, moves as ${square.cover} until revealed`;
   return `${position}, ${colorName(square.piece.color)} ${square.piece.rank}, ${symbols[square.piece.rank][square.piece.color]}`;
 }
 
@@ -46,35 +49,61 @@ interface BoardProps {
 function Board({ game, selected, destinations, canPlay, onSquare }: BoardProps) {
   return (
     <div className="board-frame">
-      <div className="board" role="group" aria-label="Four by eight game board">
-        {game.board.map((square, index) => {
-          const classes = [
-            'square',
-            selected === index ? 'square--selected' : '',
-            destinations.includes(index) ? 'square--destination' : '',
-          ].filter(Boolean).join(' ');
-          const label = squareLabel(square, index);
-          return (
-            <button
-              key={index}
-              type="button"
-              className={classes}
-              onClick={() => onSquare(index)}
-              disabled={!canPlay}
-              aria-label={label}
-              aria-pressed={square?.faceUp ? selected === index : undefined}
-              title={label}
-            >
-              {square && !square.faceUp && <span className="piece piece--hidden" aria-hidden="true">暗</span>}
-              {square?.faceUp && (
-                <span className={`piece piece--${square.piece.color}`} aria-hidden="true">
-                  {symbols[square.piece.rank][square.piece.color]}
-                </span>
-              )}
-              {!square && <span className="empty-mark" aria-hidden="true" />}
-            </button>
-          );
-        })}
+      <div className="board" role="group" aria-label="Nine by ten xiangqi board, black at the top and red at the bottom">
+        <svg className="board-lines" viewBox="0 0 900 1000" aria-hidden="true">
+          {Array.from({ length: BOARD_ROWS }, (_, row) => (
+            <line key={`rank-${row}`} x1="50" y1={50 + 100 * row} x2="850" y2={50 + 100 * row} />
+          ))}
+          {Array.from({ length: BOARD_COLUMNS }, (_, column) => {
+            const x = 50 + 100 * column;
+            return column === 0 || column === BOARD_COLUMNS - 1 ? (
+              <line key={`file-${column}`} x1={x} y1="50" x2={x} y2="950" />
+            ) : (
+              <g key={`file-${column}`}>
+                <line x1={x} y1="50" x2={x} y2="450" />
+                <line x1={x} y1="550" x2={x} y2="950" />
+              </g>
+            );
+          })}
+          <line x1="350" y1="50" x2="550" y2="250" />
+          <line x1="550" y1="50" x2="350" y2="250" />
+          <line x1="350" y1="750" x2="550" y2="950" />
+          <line x1="550" y1="750" x2="350" y2="950" />
+          <text x="240" y="519" textAnchor="middle">楚 河</text>
+          <text x="660" y="519" textAnchor="middle">汉 界</text>
+        </svg>
+        <div className="board-intersections">
+          {game.board.map((square, index) => {
+            const classes = [
+              'square',
+              selected === index ? 'square--selected' : '',
+              destinations.includes(index) ? 'square--destination' : '',
+              game.lastMove && (game.lastMove.from === index || game.lastMove.to === index) ? 'square--last-move' : '',
+            ].filter(Boolean).join(' ');
+            const label = `${squareLabel(square, index)}${destinations.includes(index) ? ', legal destination' : ''}`;
+            return (
+              <button
+                key={index}
+                type="button"
+                className={classes}
+                onClick={() => onSquare(index)}
+                disabled={!canPlay}
+                aria-label={label}
+                aria-pressed={square ? selected === index : undefined}
+                title={label}
+              >
+                {square && !square.faceUp && (
+                  <span className={`piece piece--hidden piece--hidden-${square.color}`} aria-hidden="true">暗</span>
+                )}
+                {square?.faceUp && (
+                  <span className={`piece piece--${square.piece.color}`} aria-hidden="true">
+                    {symbols[square.piece.rank][square.piece.color]}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -114,6 +143,7 @@ export default function App() {
   const destinations = selected !== null && game && currentColor
     ? legalMovesFrom(game.board, selected, currentColor)
     : [];
+  const checked = Boolean(game && currentColor && isInCheck(game.board, currentColor));
 
   useEffect(() => {
     setSelected(null);
@@ -134,12 +164,12 @@ export default function App() {
   function handleSquare(index: number) {
     if (!game || !canPlay) return;
     const square = game.board[index];
-    if (square && !square.faceUp) {
-      perform({ type: 'flip', at: index });
-    } else if (selected !== null && destinations.includes(index)) {
+    if (selected !== null && destinations.includes(index)) {
       perform({ type: 'move', from: selected, to: index });
-    } else if (square?.faceUp && square.piece.color === currentColor) {
+    } else if (square && squareColor(square) === currentColor) {
       setSelected((current) => current === index ? null : index);
+    } else {
+      setSelected(null);
     }
   }
 
@@ -197,15 +227,20 @@ export default function App() {
 
   function guidance(): string {
     if (!game) return 'Start the room server to play online, or choose hotseat play.';
-    if (game.outcome?.reason === 'elimination') return 'All of the opponent’s pieces have been captured.';
-    if (game.outcome?.reason === 'no-legal-moves') return 'The opponent has no legal action.';
+    if (game.outcome?.reason === 'checkmate') return 'Checkmate — the opposing general cannot escape.';
+    if (game.outcome?.reason === 'stalemate') return 'Stalemate — the player with no legal move loses.';
     if (mode === 'online' && room.status !== 'connected') return 'Reconnect to continue the same game.';
     if (mode === 'online' && (!room.connected[0] || !room.connected[1])) {
       return 'Share the room link below. The game pauses if either player disconnects.';
     }
-    if (!game.colors[0]) return 'The first flipped piece decides Player 1’s color.';
+    if (checked) return 'Check! The general must be protected.';
     if (mode === 'online' && room.player !== game.turn) return 'Waiting for your opponent to play.';
-    return 'Flip a piece, or select one of yours and choose a highlighted square.';
+    const square = selected === null ? null : game.board[selected];
+    if (square && !square.faceUp) {
+      return `This covered piece moves as a ${square.cover}, then reveals its identity.${destinations.length ? '' : ' No legal moves.'}`;
+    }
+    if (square) return destinations.length ? 'Choose a highlighted destination.' : 'This piece has no legal moves.';
+    return 'Select one of your pieces, then choose a highlighted destination.';
   }
 
   function playerCard(player: Player) {
@@ -229,7 +264,7 @@ export default function App() {
         <div className="brand-mark" aria-hidden="true">棋</div>
         <div>
           <p className="eyebrow">A little game of strategy &amp; luck</p>
-          <h1>Flip Xiangqi <span>暗棋</span></h1>
+          <h1>Jieqi <span>揭棋</span></h1>
         </div>
         <div className="mode-label">{mode === 'local' ? 'HOTSEAT' : 'ONLINE ROOM'}</div>
       </header>
@@ -238,7 +273,7 @@ export default function App() {
         <section className="play-area" aria-label="Game">
           <div className="game-heading" role="status" aria-live="polite">
             <div>
-              <p className="eyebrow">{game?.outcome ? 'Game over' : 'Flip · Move · Capture'}</p>
+              <p className="eyebrow">{game?.outcome ? 'Game over' : 'Move · Reveal · Checkmate'}</p>
               <h2>{heading()}</h2>
               <p>{guidance()}</p>
             </div>
@@ -248,6 +283,28 @@ export default function App() {
             <Board game={game} selected={selected} destinations={destinations} canPlay={canPlay} onSquare={handleSquare} />
           ) : (
             <div className="board-placeholder">Your game will appear here.</div>
+          )}
+
+          {game?.lastMove?.captured && (
+            <p className="capture-note" role="status" aria-live="polite">
+              Captured: {colorName(game.lastMove.captured.color)} {game.lastMove.captured.rank}{' '}
+              ({symbols[game.lastMove.captured.rank][game.lastMove.captured.color]})
+              {game.lastMove.capturedWasHidden ? ' — revealed on capture.' : '.'}
+            </p>
+          )}
+
+          {game && game.captures.length > 0 && (
+            <div className="captured-list" aria-label="Captured pieces">
+              <strong>Captured</strong>
+              {game.captures.map(({ piece, wasHidden }, index) => {
+                const label = `${colorName(piece.color)} ${piece.rank}${wasHidden ? ', revealed on capture' : ''}`;
+                return (
+                  <span key={index} className={`captured-piece captured-piece--${piece.color}`} role="img" aria-label={label} title={label}>
+                    {symbols[piece.rank][piece.color]}
+                  </span>
+                );
+              })}
+            </div>
           )}
 
           <div className="players" aria-label="Players">
@@ -328,16 +385,17 @@ export default function App() {
             <p className="eyebrow">The essentials</p>
             <h2>How to play</h2>
             <ol>
-              <li>Flip any face-down piece. The first flip assigns the colors.</li>
-              <li>On your turn, flip a piece or move yours one square orthogonally.</li>
-              <li>Capture an enemy of equal or lower rank. A soldier captures a general, but not the reverse.</li>
-              <li>A cannon captures by jumping exactly one piece, face-up or face-down.</li>
+              <li>Red moves first. Only the generals start face-up; both sides’ other identities are hidden.</li>
+              <li>A covered piece moves first as the piece normally on its starting point, then reveals its true identity.</li>
+              <li>After that, it moves as its revealed piece. Covered pieces can block and be captured; captured identities are revealed.</li>
+              <li>Use xiangqi movement, palace and river rules. Protect your general from check.</li>
+              <li>Checkmate wins; a player with no legal move also loses.</li>
             </ol>
-            <p className="rank-order"><strong>Rank</strong> 帅 / 将 &gt; 仕 / 士 &gt; 相 / 象 &gt; 车 &gt; 马 &gt; 炮 &gt; 兵 / 卒</p>
+            <p className="rank-order"><strong>Remember</strong> Horses can be blocked at the leg; cannons capture over one screen. Generals may not face each other.</p>
           </section>
         </aside>
       </div>
-      <footer>Made for playing together, one flip at a time.</footer>
+      <footer>Made for playing together, one reveal at a time.</footer>
     </main>
   );
 }
