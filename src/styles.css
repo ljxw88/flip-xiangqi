@@ -1,5 +1,5 @@
 :root {
-  font-family: 'Trebuchet MS', 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: 'Trebuchet MS', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
   color: #f8f1d8;
   background: #102e32;
   font-synthesis: none;
@@ -32,7 +32,7 @@ h1, h2 { font-weight: 900; }
   color: #fff5ce; background: radial-gradient(circle at 35% 25%, #ef7960, #b73442 70%);
   border: 2px solid #f6da95; border-radius: 50%;
   box-shadow: 0 3px 0 #751e30, 0 5px 10px #06191c99, inset 0 0 0 2px #f5a079;
-  font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: 25px; font-weight: 900; transform: rotate(-8deg);
+  font-family: 'Noto Serif SC', 'PingFang SC', 'Hiragino Mincho ProN', 'Songti SC', 'STSong', serif; font-size: 25px; font-weight: 900; transform: rotate(-8deg);
 }
 h1 { color: #fff7d9; font-size: clamp(20px, 3.2vw, 32px); letter-spacing: -0.04em; line-height: 1.1; white-space: nowrap; text-shadow: 0 3px 0 #0c2831, 0 5px 12px #0007; }
 h1 span { color: #ffd75c; font-size: 0.75em; letter-spacing: 0; }
@@ -61,7 +61,7 @@ h1 span { color: #ffd75c; font-size: 0.75em; letter-spacing: 0; }
 .board { position: relative; width: 100%; aspect-ratio: 9 / 10; overflow: hidden; background: repeating-linear-gradient(135deg, #ffffff05 0 2px, transparent 2px 7px), radial-gradient(ellipse at 35% 18%, #388b71, #17594f 66%, #12483f); }
 .board-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .board-lines line { stroke: #efd38b; stroke-width: 2.5; opacity: 0.75; }
-.board-lines text { fill: #f5df9f; font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: 50px; font-weight: 700; }
+.board-lines text { fill: #f5df9f; font-family: 'Noto Serif SC', 'PingFang SC', 'Hiragino Mincho ProN', 'Songti SC', 'STSong', serif; font-size: 50px; font-weight: 700; }
 .board-intersections { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); grid-template-rows: repeat(10, minmax(0, 1fr)); }
 .square { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; touch-action: manipulation; }
 .square--last-move::before { content: ''; position: absolute; inset: 8%; border-radius: 50%; background: #ffe27b55; pointer-events: none; }
@@ -72,7 +72,7 @@ h1 span { color: #ffd75c; font-size: 0.75em; letter-spacing: 0; }
   border: 3px solid #f6d999; border-radius: 50%;
   background: radial-gradient(circle at 35% 25%, #fffdf0, #f5e3b4 72%, #d9b979);
   box-shadow: 0 3px 0 #0b302c, 0 5px 6px #071d1d88, inset 0 0 0 3px #e5c78d;
-  font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: clamp(17px, 4vw, 36px); font-weight: 900; line-height: 1;
+  font-family: 'Noto Serif SC', 'PingFang SC', 'Hiragino Mincho ProN', 'Songti SC', 'STSong', serif; font-size: clamp(17px, 4vw, 36px); font-weight: 900; line-height: 1;
   transition: transform 140ms ease, filter 140ms ease;
 }
 .piece--red { color: #c83343; }
@@ -86,7 +86,7 @@ h1 span { color: #ffd75c; font-size: 0.75em; letter-spacing: 0; }
 .board-placeholder { min-height: 260px; display: grid; place-items: center; border: 2px dashed #6b9090; border-radius: 12px; color: #c1d9d0; font-size: 14px; }
 .capture-note { max-width: 720px; margin: 8px auto 0; color: #fce5a2; font-size: 11px; font-weight: 700; line-height: 1.3; text-align: center; }
 .captured-list { max-width: 720px; margin: 8px auto 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
-.captured-piece { display: grid; place-items: center; width: 27px; height: 27px; border: 2px solid #e9ca8b; border-radius: 50%; background: #f7e8c8; box-shadow: 0 2px 0 #17343b; font-family: 'Noto Serif CJK SC', 'Songti SC', 'SimSun', serif; font-size: 15px; font-weight: 900; }
+.captured-piece { display: grid; place-items: center; width: 27px; height: 27px; border: 2px solid #e9ca8b; border-radius: 50%; background: #f7e8c8; box-shadow: 0 2px 0 #17343b; font-family: 'Noto Serif SC', 'PingFang SC', 'Hiragino Mincho ProN', 'Songti SC', 'STSong', serif; font-size: 15px; font-weight: 900; }
 .captured-piece--red { color: #be3043; }
 .captured-piece--black { color: #1d3a48; }
 
